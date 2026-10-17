@@ -1,0 +1,45 @@
+{
+  "title": "BHS",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Verbinden met BHS",
+        "description": "Voer het lokale adres van de BHS-controller in.",
+        "data": {
+          "host": "Host",
+          "port": "HTTP-poort",
+          "protocol": "API protocol",
+          "device_id": "Registered device UUID (REST only)"
+        },
+        "data_description": {
+          "host": "IP-adres of hostnaam van de BHS-controller.",
+          "port": "DataSnap HTTP-poort. De standaard BHS-poort is 10014."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Kan geen verbinding maken met de BHS-controller",
+      "unknown": "Onverwachte fout"
+    },
+    "abort": {
+      "already_configured": "Deze BHS-controller is al geconfigureerd"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "BHS-opties",
+        "description": "Stel in hoe vaak Home Assistant de BHS-controller uitleest.",
+        "data": {
+          "scan_interval": "Pollinginterval (seconden)",
+          "protocol": "API protocol",
+          "port": "HTTP port",
+          "device_id": "Registered device UUID (REST only)"
+        },
+        "data_description": {
+          "scan_interval": "Hoe vaak alle BHS-statussen worden vernieuwd. Toegestaan bereik: 1–60 seconden."
+        }
+      }
+    }
+  }
+}
