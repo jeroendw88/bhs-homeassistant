@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
+import asyncio
 from uuid import UUID
 from aiohttp import ClientError, ClientSession
 from .exceptions import BHSApiError, BHSConnectionError
@@ -27,6 +28,8 @@ class BHSRestApi:
         self._allowed_start_dim_ids: set[str] = set()
         self._allowed_stop_dim_ids: set[str] = set()
         self._allowed_soft_ids: set[str] = set()
+        self._brightness_actions: dict[str, tuple[int, str, int, int]] = {}
+        self._brightness_lock = asyncio.Lock()
 
     @property
     def host(self) -> str:
@@ -169,7 +172,76 @@ class BHSRestApi:
             and str(m.get("name", "")).casefold().startswith("bwm_")
             and str(m.get("name", "")).casefold().endswith(("_bypass", "_down"))
         }
+        # Find exported DATAW/Timer pairs dynamically. Never derive physical
+        # bus bytes from an arbitrary member ID or trust button captions alone.
+        self._brightness_actions = {}
+        try:
+            exports = await self._request("GET", "/exports/list")
+            allowed = {
+                int(e["iD"]) for e in exports.get("exports", [])
+                if isinstance(e, dict) and e.get("allowed") is True
+                and isinstance(e.get("iD"), int)
+            }
+            # The tested dimmer export is ID 2. Other exports are not enabled.
+            if 2 in allowed:
+                content = await self._request("POST", "/exports/content", {"exportID": 2})
+                candidates: dict[str, tuple[int, str, int, int]] = {}
+                duplicates: set[str] = set()
+                for room in content.get("rooms", []):
+                    for button in room.get("buttons", []):
+                        actions = button.get("actions", [])
+                        if not isinstance(actions, list) or len(actions) != 2:
+                            continue
+                        data, timer = actions
+                        if not isinstance(data, dict) or not isinstance(timer, dict):
+                            continue
+                        member_id = str(timer.get("actionID") or "")
+                        if (member_id not in self._allowed_dimmer_ids
+                            or data.get("actionID") != "DATAW"
+                            or data.get("flank") != 1
+                            or data.get("msb") != 224
+                            or timer.get("flank") != 0
+                            or timer.get("function") != 96
+                            or timer.get("msb") != 101
+                            or not isinstance(timer.get("lsb"), int)):
+                            continue
+                        member = next((m for m in valid_members if m["memberID"] == member_id), None)
+                        if not member or member.get("group") != 5 or member.get("address") != timer["lsb"]:
+                            continue
+                        if member_id in candidates:
+                            duplicates.add(member_id)
+                        candidates[member_id] = (2, str(button.get("caption") or member["name"]),
+                                                 timer["lsb"], timer["msb"])
+                self._brightness_actions = {key: val for key, val in candidates.items()
+                                            if key not in duplicates}
+        except (BHSApiError, ValueError, TypeError, KeyError):
+            # Optional feature: existing lights remain functional if the export
+            # is missing, inaccessible, or changed.
+            self._brightness_actions = {}
         return valid_members
+
+    def supports_brightness(self, member_id: str) -> bool:
+        return member_id in self._brightness_actions
+
+    async def set_brightness(self, member_id: str, percent: int) -> None:
+        """Apply a tested DATAW percent and corresponding group-5 Timer telegram."""
+        if member_id not in self._brightness_actions or not 1 <= percent <= 100:
+            raise BHSApiError("Brightness command not allowed for this dimmer")
+        export_id, name, address, msb = self._brightness_actions[member_id]
+        async with self._brightness_lock:
+            press = await self._request("POST", "/bus/send", {
+                "exportID": export_id, "name": name, "flank": "press",
+                "actions": [{"lsb": percent, "msb": 224}],
+            })
+            if press.get("sent") != 1:
+                raise BHSApiError("BHS did not confirm the brightness DATAW send")
+            await asyncio.sleep(0.1)
+            release = await self._request("POST", "/bus/send", {
+                "exportID": export_id, "name": name, "flank": "release",
+                "actions": [{"lsb": address, "msb": msb}],
+            })
+            if release.get("sent") != 1:
+                raise BHSApiError("BHS did not confirm the brightness Timer send")
 
     async def get_member_states(self) -> dict[str, str]:
         payload = await self._request("GET", "/members/getMemberState")

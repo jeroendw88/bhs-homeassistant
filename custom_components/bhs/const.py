@@ -17,4 +17,7 @@ CONF_DEVICE_ID = "device_id"
 PROTOCOL_LEGACY = "datasnap"
 PROTOCOL_REST = "rest"
 
-PLATFORMS = ["light", "button", "binary_sensor", "switch", "cover", "sensor"]
+PLATFORMS = ["light", "button", "binary_sensor", "switch", "cover", "sensor", "number"]
+
+CONF_DIMMER_MIN_BRIGHTNESS = "dimmer_min_brightness"
+DEFAULT_DIMMER_MIN_BRIGHTNESS = 5

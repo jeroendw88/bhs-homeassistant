@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.4.1 — 2026-10-18
+
+- Adds native brightness sliders to group-5 DIM1K dimmers whose DATAW/TIMER commands are validated against BHS export ID 2.
+- Adds a per-dimmer, persistent minimum brightness (default 5%) to prevent low nonzero levels from switching the light off.
+- Remembers each dimmer’s last successfully commanded brightness across On/Off cycles and Home Assistant restarts.
+- Preserves v0.4.0 REST control, event polling, DataSnap compatibility, diagnostics and entity identities.
+- Brightness is last-commanded only: BHS does not provide measured absolute brightness feedback.
+
+## 0.4.1b3 — Per-dimmer brightness memory
+
+- Persist the last successfully commanded nonzero absolute brightness per DIM1K channel in Home Assistant storage, keyed by integration entry and member ID.
+- A normal On command restores that level using the tested DATAW/TIMER sequence; if no level has ever been sent, it preserves the prior Set behavior.
+- Off preserves the stored level, while explicit 0 brightness still performs Off.
+- Apply the configured minimum brightness to restored levels; keep the memory separate from actual bus brightness feedback.
+- Do not change legacy DataSnap control, scenes, covers, sockets, SoftM, or event polling.
+
+## v0.4.1b2 — Per-dimmer minimum brightness
+
+- Adds a persisted configuration number entity for each REST DIM1K brightness-capable light (default 5%, configurable 1–100%).
+- Clamps positive brightness requests to the configured minimum; explicit Off remains Off.
+- Displays the effective last-commanded brightness and exposes the configured minimum as a light attribute.
+- Existing REST commands, discovery and polling remain unchanged.
+
+## 0.4.1b1 — DIM1K brightness preview
+
+- Add native brightness sliders for group-5 DIM1K channels whose DATAW and TIMER actions are validated against BHS export ID 2 at startup.
+- Serialize paired press/release raw telegrams; preserve all existing relay, dimming and scene operations.
+- Brightness reflects last requested level only, not measured bus feedback.
+- No brightness slider appears if the export cannot be read or its actions do not match.
+
+
 ## 0.4.0 — 2026-10-17
 
 Stable release based on the live-tested `0.4.0b8.post1` integration:

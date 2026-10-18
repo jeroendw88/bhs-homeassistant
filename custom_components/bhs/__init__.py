@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.storage import Store
 
 from .api import BHSApi
 from .rest_api import BHSRestApi
 from .const import (CONF_SCAN_INTERVAL, CONF_DEVICE_ID, CONF_PROTOCOL,
-                    DEFAULT_SCAN_INTERVAL_SECONDS, PLATFORMS, PROTOCOL_REST)
+                    DEFAULT_SCAN_INTERVAL_SECONDS, PLATFORMS, PROTOCOL_REST,
+                    CONF_DIMMER_MIN_BRIGHTNESS, DEFAULT_DIMMER_MIN_BRIGHTNESS)
 from .coordinator import BHSCoordinator
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -30,6 +38,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = BHSCoordinator(hass, api, scan_interval)
     await coordinator.async_config_entry_first_refresh()
 
+    # Shared per-dimmer configuration, persisted in config-entry options.
+    configured = entry.options.get(CONF_DIMMER_MIN_BRIGHTNESS, {})
+    if not isinstance(configured, dict):
+        configured = {}
+    coordinator.dimmer_min_brightness = {
+        str(member_id): max(1, min(100, int(value)))
+        for member_id, value in configured.items()
+        if isinstance(value, int) and not isinstance(value, bool)
+    }
+    coordinator.dimmer_min_default = DEFAULT_DIMMER_MIN_BRIGHTNESS
+    # Persist only successfully commanded levels. This is not measured feedback.
+    coordinator.brightness_memory_store = Store(
+        hass, 1, f"bhs_{entry.entry_id}_brightness_memory"
+    )
+    coordinator.brightness_memory_lock = asyncio.Lock()
+    try:
+        stored = await coordinator.brightness_memory_store.async_load()
+    except (OSError, ValueError) as err:
+        _LOGGER.warning("Unable to load BHS brightness memory: %s", err)
+        stored = None
+    values = stored.get("levels", {}) if isinstance(stored, dict) else {}
+    coordinator.brightness_memory = {
+        str(member_id): int(percent)
+        for member_id, percent in values.items()
+        if isinstance(member_id, str)
+        and isinstance(percent, int) and not isinstance(percent, bool)
+        and 1 <= percent <= 100
+    } if isinstance(values, dict) else {}
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
