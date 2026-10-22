@@ -1,4 +1,4 @@
-"""BHS REST v2 API client (unsecured mode, including tested group-5 DIM1K start/stop)."""
+"""BHS REST API client with validated, export-driven DIM1K brightness commands."""
 from __future__ import annotations
 
 from typing import Any
@@ -6,13 +6,20 @@ import asyncio
 from uuid import UUID
 from aiohttp import ClientError, ClientSession
 from .exceptions import BHSApiError, BHSConnectionError
+from .sdim import sdim_role, validated_sdim_members
+from .member_registry import (is_relay, is_dimmer, is_exu, is_soft,
+    resolve_role, cover_pairs, ROLE_LIGHT, ROLE_SWITCH, ROLE_EXU, ROLE_SOFT)
 
 
 class BHSRestApi:
     """Use a previously registered device UUID; never register automatically."""
 
     def __init__(self, session: ClientSession, host: str, port: int, device_id: str,
-                 dimmer_export_id: int = 2, exu_export_id: int = 7) -> None:
+                 dimmer_export_id: int = 2, exu_export_id: int = 7,
+                 member_roles: dict[str, str] | None = None,
+                 cover_directions: dict[str, str] | None = None) -> None:
+        self.member_roles = member_roles or {}
+        self.cover_directions = cover_directions or {}
         self._session = session
         self._host = host.strip().removeprefix("http://").removeprefix("https://").rstrip("/")
         self._port = port
@@ -90,104 +97,68 @@ class BHSRestApi:
         if not isinstance(members, list):
             raise BHSApiError("Unexpected REST getMembers response")
         valid_members = [m for m in members if isinstance(m, dict) and m.get("memberID")]
-        # Only explicitly known VER_* RLM_4 relays are enabled for REST writes.
-        # In particular, DIM_* members, shutters, software members and alarm
-        # outputs must remain blocked until their behavior has been tested.
+        # Discovery is keyed by hardware metadata + explicit member-ID mappings.
+        # Legacy classification remains a fallback for existing installations.
+        # Unrecognized RLM_4 channels are visible as switches, but writes need
+        # either an explicit mapping or the previously supported name/group.
         self._allowed_light_ids = {
             str(m["memberID"]) for m in valid_members
-            if m.get("memberType") == 1
-            and str(m.get("version", "")).casefold() == "rlm_4"
-            and str(m.get("name", "")).startswith("VER_")
-            and m.get("group") == 2
+            if is_relay(m) and resolve_role(m, self.member_roles) == ROLE_LIGHT
+            and (str(m["memberID"]) in self.member_roles
+                 or (m.get("group") == 2 and str(m.get("name") or "").startswith("VER_")))
         }
         self._allowed_socket_ids = {
             str(m["memberID"]) for m in valid_members
-            if m.get("memberType") == 1
-            and str(m.get("version", "")).casefold() == "rlm_4"
-            and str(m.get("name", "")).startswith("SK_")
-            and m.get("group") == 2
+            if is_relay(m) and resolve_role(m, self.member_roles) == ROLE_SWITCH
+            and (self.member_roles.get(str(m["memberID"])) == ROLE_SWITCH
+                 or (m.get("group") == 2 and str(m.get("name") or "").startswith("SK_")))
         }
-        # Only complete, adjacent group-3 RLM_4 cover pairs are writable.
-        # A missing direction relay keeps the entire pair blocked.
-        candidates = {
-            int(m["address"]): m for m in valid_members
-            if m.get("memberType") == 20
-            and m.get("group") == 3
-            and str(m.get("version", "")).casefold() == "rlm_4"
-            and isinstance(m.get("address"), int)
+        # Covers are writable only if the pair is complete and directional
+        # mapping has been explicitly confirmed or matches legacy _OP names.
+        self._allowed_cover_ids = {
+            str(m["memberID"])
+            for up, down in cover_pairs(valid_members, self.cover_directions)
+            for m in (up, down)
         }
-        self._allowed_cover_ids = set()
-        for odd_address in range(1, 256, 2):
-            first, second = candidates.get(odd_address), candidates.get(odd_address + 1)
-            if first and second:
-                first_name = str(first.get("name", "")).upper()
-                second_name = str(second.get("name", "")).upper()
-                if first_name.endswith("_OP") and second_name.endswith("_NEER"):
-                    self._allowed_cover_ids.update((str(first["memberID"]), str(second["memberID"])))
-        # DIM1K channels: only full-on Set and off Reset, no cyclic dimming.
+        # Group-5 dimmer on/off commands retain their tested baseline.
+        # Other groups gain Set/Reset permission only after export validation.
         self._allowed_dimmer_ids = {
             str(m["memberID"]) for m in valid_members
-            if m.get("memberType") == 2
-            and str(m.get("version", "")).casefold() == "dim1k_15"
-            and str(m.get("name", "")).startswith("DIM_")
-            and m.get("group") == 5
+            if is_dimmer(m) and m.get("group") == 5
+        }
+        dimmer_members = {
+            str(m["memberID"]): m for m in valid_members if is_dimmer(m)
         }
         # Cyclic dimming has been physically verified only on group 5.
         # Require an exactly identified group-5 Stop Dim member; otherwise
         # block starts to avoid leaving a dimming operation running.
-        stop_members = [
-            m for m in valid_members
-            if m.get("group") == 5
-            and m.get("address") == 220
-            and m.get("memberType") == 19
-            and str(m.get("version", "")).casefold() == "sdim"
-            and str(m.get("name", "")).strip().casefold() == "stop dim"
-        ]
-        self._allowed_stop_dim_ids = (
-            {str(stop_members[0]["memberID"])} if len(stop_members) == 1 else set()
-        )
+        validated_sdim = validated_sdim_members(valid_members)
+        self._allowed_stop_dim_ids = {
+            str(member["memberID"]) for (group, address), member in validated_sdim.items()
+            if address == 220
+        }
+        # Only group 5 has verified cyclic dimming start behavior.
         self._allowed_start_dim_ids = (
-            set(self._allowed_dimmer_ids) if self._allowed_stop_dim_ids else set()
+            set(self._allowed_dimmer_ids) if (5, 220) in validated_sdim else set()
         )
-        # Scene switches from groups 5 and 6 already use the legacy 'dimmer'
-        # function. Allow scene activation and group reset, never recording,
-        # physical cyclic dimming or other group control functions.
+        # SDim slots are identified by address, not user-edited names.
+        # Recording is NEVER allowed. A scene is enabled only if its group
+        # has one unambiguous reset member, matching switch entity creation.
         self._allowed_scene_ids = set()
         self._allowed_scene_reset_ids = set()
-        for m in valid_members:
-            if (m.get("memberType") != 19
-                or str(m.get("version", "")).casefold() != "sdim"
-                or m.get("group") not in (5, 6)):
-                continue
-            name = str(m.get("name") or "").strip().casefold()
-            if name == "groepsreset dim":
-                self._allowed_scene_reset_ids.add(str(m["memberID"]))
-            elif (name not in ("stop dim", "groepssturing dim")
-                  and "record" not in name):
-                self._allowed_scene_ids.add(str(m["memberID"]))
-        # Conservative SoftM rollout. Explicitly exclude whole-house, alarm,
-        # step, and scene-like SoftM members. Other SoftM remain read-only.
-        # This check uses discovery metadata, never a user-supplied name.
+        for (group, address), member in validated_sdim.items():
+            if sdim_role(member) == "scene" and (group, 219) in validated_sdim:
+                self._allowed_scene_ids.add(str(member["memberID"]))
+                self._allowed_scene_reset_ids.add(str(validated_sdim[(group, 219)]["memberID"]))
+        # Only legacy vetted channels or explicitly opted-in member IDs can
+        # receive potentially consequential SoftM / EXU commands.
         self._allowed_soft_ids = {
             str(m["memberID"]) for m in valid_members
-            if m.get("group") == 10
-            and m.get("memberType") == 4
-            and str(m.get("version", "")).casefold() == "softm"
-            and str(m.get("name", "")).casefold().startswith("bwm_")
-            and str(m.get("name", "")).casefold().endswith(("_bypass", "_down"))
+            if is_soft(m) and resolve_role(m, self.member_roles) == ROLE_SOFT
         }
-        # EXU_192 outdoor motion detector operating modes (not motion events).
-        # Only the four physically tested BWM members are writable; reserve
-        # channels and any other EXU modules remain excluded.
         self._allowed_exu_ids = {
             str(m["memberID"]) for m in valid_members
-            if m.get("memberType") == 17
-            and str(m.get("version", "")).casefold() == "exu_192"
-            and m.get("group") == 1
-            and m.get("address") in (101, 102, 103, 104)
-            and str(m.get("name", "")).casefold() in {
-                "bwm_parking", "bwm_terras", "bwm_voordeur", "bwm_garage"
-            }
+            if is_exu(m) and resolve_role(m, self.member_roles) == ROLE_EXU
         }
         # Find exported DATAW/Timer pairs dynamically. Never derive physical
         # bus bytes from an arbitrary member ID or trust button captions alone.
@@ -205,7 +176,11 @@ class BHSRestApi:
                 candidates: dict[str, tuple[int, str, int, int]] = {}
                 duplicates: set[str] = set()
                 for room in content.get("rooms", []):
+                    if not isinstance(room, dict):
+                        continue
                     for button in room.get("buttons", []):
+                        if not isinstance(button, dict):
+                            continue
                         actions = button.get("actions", [])
                         if not isinstance(actions, list) or len(actions) != 2:
                             continue
@@ -213,24 +188,47 @@ class BHSRestApi:
                         if not isinstance(data, dict) or not isinstance(timer, dict):
                             continue
                         member_id = str(timer.get("actionID") or "")
-                        if (member_id not in self._allowed_dimmer_ids
-                            or data.get("actionID") != "DATAW"
+                        member = dimmer_members.get(member_id)
+                        if member is None:
+                            continue
+                        # Match a recognized percentage DATAW + targeted TIMER
+                        # action, without assuming the dimmer's BHS group or
+                        # the TIMER bus MSB. No bus bytes are calculated from IDs.
+                        if (data.get("actionID") != "DATAW"
+                            or data.get("function") != 224
+                            or data.get("register") != 1
                             or data.get("flank") != 1
                             or data.get("msb") != 224
+                            or not isinstance(data.get("lsb"), int)
+                            or not 0 <= data["lsb"] <= 100
+                            or timer.get("register") != 2
                             or timer.get("flank") != 0
                             or timer.get("function") != 96
-                            or timer.get("msb") != 101
-                            or not isinstance(timer.get("lsb"), int)):
+                            or not isinstance(timer.get("lsb"), int)
+                            or timer["lsb"] != member.get("address")
+                            or not isinstance(timer.get("msb"), int)
+                            or not 0 <= timer["msb"] <= 255):
                             continue
-                        member = next((m for m in valid_members if m["memberID"] == member_id), None)
-                        if not member or member.get("group") != 5 or member.get("address") != timer["lsb"]:
+                        # Require a positive target group/address and a named
+                        # button from the selected, authorized mobile export.
+                        if (not isinstance(member.get("group"), int)
+                            or member["group"] < 1
+                            or not 1 <= timer["lsb"] <= 255):
+                            continue
+                        caption = button.get("caption")
+                        if not isinstance(caption, str) or not caption.strip():
                             continue
                         if member_id in candidates:
                             duplicates.add(member_id)
-                        candidates[member_id] = (self.dimmer_export_id, str(button.get("caption") or member["name"]),
-                                                 timer["lsb"], timer["msb"])
-                self._brightness_actions = {key: val for key, val in candidates.items()
-                                            if key not in duplicates}
+                        candidates[member_id] = (
+                            self.dimmer_export_id, caption, timer["lsb"], timer["msb"]
+                        )
+                self._brightness_actions = {
+                    key: val for key, val in candidates.items() if key not in duplicates
+                }
+                # Only export-validated channels beyond group 5 may receive
+                # basic Set/Reset. Do not enable cyclic dimming outside group 5.
+                self._allowed_dimmer_ids.update(self._brightness_actions)
         except (BHSApiError, ValueError, TypeError, KeyError):
             # Optional feature: existing lights remain functional if the export
             # is missing, inaccessible, or changed.
@@ -241,7 +239,7 @@ class BHSRestApi:
         return member_id in self._brightness_actions
 
     async def set_brightness(self, member_id: str, percent: int) -> None:
-        """Apply a tested DATAW percent and corresponding group-5 Timer telegram."""
+        """Apply a validated export DATAW percent and channel TIMER telegram."""
         if member_id not in self._brightness_actions or not 1 <= percent <= 100:
             raise BHSApiError("Brightness command not allowed for this dimmer")
         export_id, name, address, msb = self._brightness_actions[member_id]

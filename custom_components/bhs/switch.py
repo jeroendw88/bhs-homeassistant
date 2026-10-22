@@ -12,75 +12,21 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from .coordinator import BHSCoordinator
 from .entity import BHSEntity
 from .rest_api import BHSRestApi
+from .sdim import sdim_role, validated_sdim_members
+from .member_registry import (is_relay, is_soft, is_exu, resolve_role,
+                              ROLE_SWITCH, ROLE_SOFT, ROLE_EXU)
 
-
-
-def _is_relay_switch(member: dict[str, Any]) -> bool:
-    """Return True for RLM_4 relay outputs not represented as lights/covers."""
-    member_id = str(member.get("memberID") or "")
-    name = str(member.get("name") or "")
-    version = str(member.get("version") or "").casefold()
-    return (
-        bool(member_id)
-        and member.get("memberType") == 1
-        and version == "rlm_4"
-        and not name.startswith("VER_")
-    )
-
-def _is_soft_member(member: dict[str, Any]) -> bool:
-    """Return True for BHS SoftwareMember (SoftM) members."""
-    return (
-        bool(member.get("memberID"))
-        and member.get("memberType") == 4
-        and str(member.get("version") or "").casefold() == "softm"
-    )
-
-
-def _is_exu_motion_mode(member: dict[str, Any]) -> bool:
-    """A tested outdoor EXU mode; never include the reserve channel."""
-    return (
-        bool(member.get("memberID"))
-        and member.get("group") == 1
-        and member.get("address") in (101, 102, 103, 104)
-        and member.get("memberType") == 17
-        and str(member.get("version") or "").casefold() == "exu_192"
-        and str(member.get("name") or "").casefold()
-        in {"bwm_parking", "bwm_terras", "bwm_voordeur", "bwm_garage"}
-    )
-
-
-def _is_sdim(member: dict[str, Any]) -> bool:
-    """Return True for BHS SDim special/scene members."""
-    return (
-        bool(member.get("memberID"))
-        and member.get("memberType") == 19
-        and str(member.get("version") or "").casefold() == "sdim"
-    )
 
 
 def _is_scene(member: dict[str, Any]) -> bool:
-    """Return True for a callable SDim scene, excluding control/record members."""
-    if not _is_sdim(member):
-        return False
-    name = str(member.get("name") or "").casefold()
-    return (
-        name not in {"stop dim", "groepsreset dim"}
-        and "record" not in name
-    )
+    """Recognize SDim scene slots 221-228, independent of scene name."""
+    return sdim_role(member) == "scene"
 
 
 def _group_reset_members(members: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
-    """Map BHS group number to its GroepsReset Dim member."""
-    resets: dict[int, dict[str, Any]] = {}
-    for member in members:
-        if not _is_sdim(member):
-            continue
-        if str(member.get("name") or "").casefold() != "groepsreset dim":
-            continue
-        group = member.get("group")
-        if isinstance(group, int):
-            resets[group] = member
-    return resets
+    """Find an unambiguous SDim reset (address 219) for each group."""
+    return {group: member for (group, address), member
+            in validated_sdim_members(members).items() if address == 219}
 
 
 async def async_setup_entry(
@@ -93,26 +39,29 @@ async def async_setup_entry(
     entities: list[SwitchEntity] = [
         BHSRelaySwitch(coordinator, member)
         for member in coordinator.members
-        if _is_relay_switch(member)
+        if is_relay(member) and resolve_role(member, coordinator.member_roles) == ROLE_SWITCH
     ]
     entities.extend(
         BHSSoftMemberSwitch(coordinator, member)
         for member in coordinator.members
-        if _is_soft_member(member)
+        if is_soft(member) and resolve_role(member, coordinator.member_roles) == ROLE_SOFT
     )
 
     if isinstance(coordinator.api, BHSRestApi):
         entities.extend(
             BHSExuModeSwitch(coordinator, member)
             for member in coordinator.members
-            if _is_exu_motion_mode(member)
+            if is_exu(member) and resolve_role(member, coordinator.member_roles) == ROLE_EXU
         )
 
+    validated = validated_sdim_members(coordinator.members)
     group_resets = _group_reset_members(coordinator.members)
     for member in coordinator.members:
         if not _is_scene(member):
             continue
         group = member.get("group")
+        if validated.get((group, member.get("address"))) is not member:
+            continue
         reset_member = group_resets.get(group) if isinstance(group, int) else None
         if reset_member is not None:
             entities.append(BHSSDimSceneSwitch(coordinator, member, reset_member))

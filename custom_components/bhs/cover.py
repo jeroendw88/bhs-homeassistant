@@ -10,12 +10,14 @@ from typing import Any
 
 from homeassistant.components.cover import CoverEntity, CoverEntityFeature
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import BHSCoordinator
 from .entity import BHSEntity
 from .const import DEFAULT_COVER_TRAVEL_SECONDS
+from .member_registry import cover_pairs
+from .cover_identity import pair_identity
 
 
 def _is_cover_member(member: dict[str, Any]) -> bool:
@@ -63,12 +65,20 @@ def _cover_pairs(members: list[dict[str, Any]]) -> list[tuple[dict[str, Any], di
 
 
 def _cover_name(open_member: dict[str, Any], close_member: dict[str, Any]) -> str:
-    """Build a readable cover name from the pair."""
-    for member, suffix in ((open_member, "_OP"), (close_member, "_NEER")):
-        name = str(member.get("name") or "")
-        if name.upper().endswith(suffix):
-            return name[: -len(suffix)]
-    return f"Cover {open_member.get('group')}.{open_member.get('address')}"
+    """Build a cover name from physical member names, independent of direction.
+
+    The user's direction mapping may swap which relay opens the cover. The
+    physical names (_OP / _NEER) must not be interpreted as direction mapping.
+    """
+    members = (open_member, close_member)
+    for suffix in ("_OP", "_NEER"):
+        for member in members:
+            name = str(member.get("name") or "")
+            if name.upper().endswith(suffix):
+                return name[: -len(suffix)]
+    # A deterministic fallback for installations without naming conventions.
+    first = min(members, key=lambda m: (int(m.get("group") or 0), int(m.get("address") or 0)))
+    return f"Cover {first.get('group')}.{first.get('address')}"
 
 
 async def async_setup_entry(
@@ -79,8 +89,9 @@ async def async_setup_entry(
     """Set up BHS covers."""
     coordinator: BHSCoordinator = entry.runtime_data
     async_add_entities(
-        BHSCover(coordinator, open_member, close_member)
-        for open_member, close_member in _cover_pairs(coordinator.members)
+        BHSCover(coordinator, open_member, close_member,
+                 pair_identity(hass, open_member, close_member))
+        for open_member, close_member in cover_pairs(coordinator.members, coordinator.cover_directions)
     )
 
 
@@ -98,13 +109,13 @@ class BHSCover(BHSEntity, CoverEntity):
     _attr_icon = "mdi:window-shutter"
 
     def __init__(self, coordinator: BHSCoordinator, open_member: dict[str, Any],
-                 close_member: dict[str, Any]) -> None:
+                 close_member: dict[str, Any], stable_unique_id: str) -> None:
         super().__init__(coordinator, open_member)
         self.open_member = open_member
         self.close_member = close_member
         self.open_member_id = str(open_member["memberID"])
         self.close_member_id = str(close_member["memberID"])
-        self._attr_unique_id = f"{self.open_member_id}_{self.close_member_id}_cover"
+        self._attr_unique_id = stable_unique_id
         self._attr_name = _cover_name(open_member, close_member)
         self._command_lock = asyncio.Lock()
         self._active_direction: str | None = None
@@ -154,6 +165,7 @@ class BHSCover(BHSEntity, CoverEntity):
         else:
             self._timer_unsub = async_call_later(self.hass, remaining, self._timer_finished)
 
+    @callback
     def _timer_finished(self, _now) -> None:
         self._timer_unsub = None
         self._complete_if_still_active()

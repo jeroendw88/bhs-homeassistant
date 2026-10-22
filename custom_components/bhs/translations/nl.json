@@ -32,7 +32,15 @@
   "options": {
     "step": {
       "init": {
-        "title": "BHS-opties",
+        "title": "BHS instellingen",
+        "menu_options": {
+          "general": "Verbinding en exports",
+          "member_mapping": "Member types (relais, EXU, SoftM)",
+          "cover_mapping": "Rolluik richtingstoewijzing"
+        }
+      },
+      "general": {
+        "title": "Verbinding en exports",
         "description": "Stel in hoe vaak Home Assistant de BHS-controller uitleest.",
         "data": {
           "scan_interval": "Pollinginterval (seconden)",
@@ -47,7 +55,39 @@
           "dimmer_export_id": "Mobile export configured in BLConfig for DIM1K brightness telegrams.",
           "exu_export_id": "Mobile export for EXU members; standard EXU mode control does not require it."
         }
+      },
+      "member_mapping": {
+        "title": "Selecteer BHS-member",
+        "description": "Kies het BHS-member dat je wilt instellen. De lijst toont naam, type, groep en adres.",
+        "data": {
+          "member": "BHS-member"
+        }
+      },
+      "cover_mapping": {
+        "title": "Selecteer rolluik of screen",
+        "description": "Kies het relaispaar. Elke optie toont de twee BHS-namen en busadressen.",
+        "data": {
+          "cover": "Rolluik / screen"
+        }
+      },
+      "member_role": {
+        "title": "BHS-member instellen",
+        "description": "**{member_name}** (groep {group}, adres {address})\nMember-ID: {member_id}\n\nKies hoe Home Assistant dit member weergeeft.",
+        "data": {
+          "role": "Entiteittype / gedrag"
+        }
+      },
+      "cover_direction": {
+        "title": "Bevestig de bewegingsrichting",
+        "description": "**{first_name}** / **{second_name}** (groep {group}, adressen {first_address}–{second_address}).\n\nSelecteer welk relais het rolluik OPENT. Het andere relais SLUIT. Kies Uitgeschakeld bij twijfel. Controleer de bedrading voor bediening.",
+        "data": {
+          "opening_relay": "Open-relais"
+        }
       }
+    },
+    "abort": {
+      "no_members": "Geen ondersteunde members gevonden",
+      "no_covers": "Geen volledige rolluikparen gevonden"
     }
   }
 }

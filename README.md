@@ -1,17 +1,17 @@
 # BHS — Home Assistant custom integration
 
-**Release: 0.4.2**  
+**Release candidate: 0.4.3**  
 A local Home Assistant custom integration for the B-Logicx Home Server (BHS), supporting the new REST API and legacy DataSnap.
 
 ## Supported functionality
 
 - **Discovery and states:** member discovery and state mapping by stable `memberID`. In REST mode, `/api/members/getChanges` is polled every 1–2 seconds, with a full state snapshot on startup, on `fresh: true`, after polling failure, and approximately every 60 seconds.
-- **Lights:** `VER_*` RLM_4 lights and `DIM_*` DIM1K on/off, plus native brightness sliders for channels validated against the configured dimmer export (DATAW/TIMER).
-- **Switches:** `SK_*` sockets and other mapped RLM_4 outputs. REST writes are limited to the tested `SK_*` class, not every discovered relay.
-- **Covers:** paired `_OP` and `_NEER` shutter/screen relays; reset opposite relay before activating a direction. Per-cover configurable travel time estimates completed opening/closing from continuous `_OP`/`_NEER` relay activation. An interrupted travel cycle leaves the endpoint unknown; the controller does not report actual physical position.
+- **Lights:** memberType 2 DIM1K channels and RLM_4 relays explicitly classified as lights (legacy `VER_*` mapping retained). Brightness sliders require a validated DATAW/TIMER export.
+- **Switches:** memberType 1 RLM_4 outputs; new relays default to generic switches until classified. REST writes require explicit opt-in or a legacy vetted mapping. Legacy `SK_*` mappings are preserved.
+- **Covers:** memberType 20 paired shutter/screen relays, with named direction-mapping options; reset opposite relay before activating a direction. Per-cover configurable travel time estimates completed opening/closing from continuous `_OP`/`_NEER` relay activation. An interrupted travel cycle leaves the endpoint unknown; the controller does not report actual physical position.
 - **DIM1K dimming:** group-5 Start Dim and Stop Dim actions; stop dimming explicitly. No automatic timeout is guaranteed.
-- **Scenes:** supported SDim scene on/off with group-reset semantics. Off may reset other scenes in the same group. Scene recording is excluded.
-- **SoftM:** selected `BWM_*_bypass` and `BWM_*_down` commands in REST mode; other SoftM commands stay blocked. Legacy DataSnap behavior is preserved.
+- **Scenes:** SDim memberType 19 scene slots (221–228), grouped with address 219 reset and 220 Stop Dim; name-independent classification. Supported scene on/off with group-reset semantics. Off may reset other scenes in the same group. Scene recording is excluded.
+- **SoftM:** previously vetted member controls and explicitly opted-in SoftM switches; unknown SoftM commands stay blocked. Legacy DataSnap behavior is preserved.
 - **Diagnostics:** connection status, timestamps, event and synchronization counts, error counts, and privacy-conscious diagnostics export.
 
 ## Requirements and configuration
@@ -23,7 +23,7 @@ A local Home Assistant custom integration for the B-Logicx Home Server (BHS), su
 
 ### DIM1K brightness controls
 
-- For compatible group-5 DIM1K members discovered in the **configured BHS dimmer export**, a Home Assistant brightness slider sends absolute levels via two ordered `/api/bus/send` actions (DATAW followed by TIMER). Other dimmers keep existing on/off behavior.
+- For compatible DIM1K members discovered in the **configured BHS dimmer export**, a Home Assistant brightness slider sends absolute levels via two ordered `/api/bus/send` actions (DATAW followed by TIMER). Other dimmers keep existing on/off behavior.
 - Each brightness-capable dimmer has a **Minimum brightness** configuration entity (default **5%**, adjustable 1–100%). Nonzero requests below this threshold are clamped; Off still works normally.
 - The last successfully commanded nonzero level is remembered separately for each dimmer, persists across restarts, and is restored on a plain On request.
 - Brightness reflects the **last command sent by Home Assistant**, not a measured level; wall-switch dimming and scenes may make the reported level inaccurate.
@@ -31,9 +31,9 @@ A local Home Assistant custom integration for the B-Logicx Home Server (BHS), su
 
 ### EXU control and cover travel time
 
-- `EXU_192` members with `BWM_*` names are exposed as Manual/Automatic mode switches (Set/Reset). These represent the last known mode command, **not** motion detection. Reserve EXU members are excluded.
+- Vetted legacy EXU_192 channels or EXU members explicitly enabled in Member Roles are exposed as Manual/Automatic mode switches (Set/Reset). These represent the last known mode command, **not** motion detection. Reserve EXU members are excluded.
 - The EXU export ID is configurable (default 7) for potential export-based functionality; the current mode switches use member commands and do not require an export.
-- Each paired `_OP`/`_NEER` cover has a **Travel time** configuration number (default 30 seconds). A relay staying Set for the full duration results in an estimated Open/Closed state; stopping early gives Unknown. No actual position measurement or partial-position estimation is available.
+- Each confirmed memberType 20 cover pair has a **Travel time** configuration number (default 30 seconds). A relay staying Set for the full duration results in an estimated Open/Closed state; stopping early gives Unknown. No actual position measurement or partial-position estimation is available.
 
 ### Manual upgrade
 
@@ -42,8 +42,8 @@ A local Home Assistant custom integration for the B-Logicx Home Server (BHS), su
 
 ```sh
 cd /config
-cp -a custom_components/bhs custom_components/bhs_backup_pre_042
-unzip -o bhs-hacs-v0.4.2.zip 'custom_components/*' -d /config/
+cp -a custom_components/bhs custom_components/bhs_backup_pre_rc1
+unzip -o bhs-hacs-v0.4.3.zip 'custom_components/*' -d /config/
 ha core restart
 ```
 
@@ -51,7 +51,7 @@ ha core restart
 
 ### HACS
 
-Repository layout includes `custom_components/bhs`, `hacs.json`, this README and a changelog. To distribute updates through HACS, place these files at the root of your GitHub custom-integration repository, commit them, and create a GitHub release/tag `v0.4.2`. A locally created ZIP alone does **not** publish a HACS update. Public HACS catalog submission requires additional validation; adding the repository as a custom HACS repository does not require public catalog acceptance.
+Repository layout includes `custom_components/bhs`, `hacs.json`, this README and a changelog. To distribute updates through HACS, place these files at the root of your GitHub custom-integration repository, commit them, and create a GitHub pre-release tag `v0.4.3`. This is a release candidate; do not publish as stable until validated. A locally created ZIP alone does **not** publish a HACS update. Public HACS catalog submission requires additional validation; adding the repository as a custom HACS repository does not require public catalog acceptance.
 
 ## Known limitations
 
@@ -59,6 +59,16 @@ Repository layout includes `custom_components/bhs`, `hacs.json`, this README and
 - REST commands remain deliberately restricted to physically tested categories. Group-6 continuous dimming, arbitrary SoftM control, scene recording and additional sensors/thermostats are not included.
 - Diagnostic entities may be unavailable if the integration cannot initialize during setup; recovery after a network failure without reload has not been independently validated in a controlled outage test.
 - A registered UUID should have only **one `getChanges` consumer**. Do not poll it simultaneously from a separate script.
-- Integration counters reset on reload, and event updates may lag up to the configured 1–2-second REST polling interval.
+- Integration counters reset on reload, and event updates may lag up to the configured polling interval (2 seconds by default).
 
 For changes by release, see [CHANGELOG.md](CHANGELOG.md).
+
+## v0.4.3 upgrade validation
+
+1. Create a full Home Assistant backup; copy `/config/custom_components/bhs` before replacing it.
+2. Install over the existing integration **without deleting/re-adding the BHS config entry**.
+3. Confirm lights, sockets, nine exported dimmers, shutter entity IDs, travel-time numbers, EXU mode switches, and SDim scenes.
+4. Test one representative command per device category and check BHS diagnostic sensors.
+5. On a fresh installation, assign ambiguous relay roles and shutter opening direction explicitly in **BHS → Configure** before commanding hardware.
+
+**Safety boundary:** An unknown RLM relay can appear as a generic switch but will not receive REST Set/Reset writes until mapped. Unknown EXU/SoftM modules require explicit opt-in. Record Scene (SDim address 229) remains blocked. Group-5-only cyclic dimming has not been generalized.

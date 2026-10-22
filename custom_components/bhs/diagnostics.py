@@ -8,7 +8,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_SECONDS
+from .const import CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_SECONDS, INTEGRATION_VERSION
 from .rest_api import BHSRestApi
 from .coordinator import BHSCoordinator
 
@@ -36,7 +36,7 @@ async def async_get_config_entry_diagnostics(
 
     return {
         "integration": {
-            "version": "0.4.0",
+            "version": INTEGRATION_VERSION,
             "protocol": "rest" if isinstance(coordinator.api, BHSRestApi) else "datasnap",
             "scan_interval_seconds": int(
                 entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_SECONDS)

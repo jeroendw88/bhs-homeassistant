@@ -14,19 +14,14 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from .coordinator import BHSCoordinator
 from .rest_api import BHSRestApi
 from .entity import BHSEntity
+from .member_registry import is_relay, is_dimmer, resolve_role, ROLE_LIGHT
 
 _LOGGER = logging.getLogger(__name__)
 
 
 def _is_supported_light(member: dict[str, Any]) -> bool:
-    """Return True for known lighting members in v0.1."""
-    member_id = str(member.get("memberID") or "")
-    name = str(member.get("name") or "")
-    member_type = member.get("memberType")
-    return bool(member_id) and (
-        (member_type == 1 and name.startswith("VER_"))
-        or (member_type == 2 and name.startswith("DIM_"))
-    )
+    """Identify a DIM1K channel from BHS module metadata, not its name."""
+    return is_dimmer(member)
 
 
 async def async_setup_entry(
@@ -39,7 +34,17 @@ async def async_setup_entry(
     async_add_entities(
         BHSLight(coordinator, member)
         for member in coordinator.members
-        if _is_supported_light(member)
+        if ((
+            _is_supported_light(member)
+            and (
+                not isinstance(coordinator.api, BHSRestApi)
+                or member.get("group") == 5  # Existing, tested basic controls.
+                or coordinator.api.supports_brightness(str(member["memberID"]))
+            )
+        ) or (
+            is_relay(member)
+            and resolve_role(member, coordinator.member_roles) == ROLE_LIGHT
+        ))
     )
 
 

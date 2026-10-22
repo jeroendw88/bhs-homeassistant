@@ -11,32 +11,14 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import BHSCoordinator
 from .entity import BHSEntity
+from .member_registry import is_dimmer
+from .rest_api import BHSRestApi
+from .sdim import sdim_role, validated_sdim_members
 
 
 def _is_dimmer(member: dict[str, Any]) -> bool:
     """Return True for physical DIM1K dimmer channels."""
-    return (
-        bool(member.get("memberID"))
-        and member.get("memberType") == 2
-        and str(member.get("name") or "").startswith("DIM_")
-    )
-
-
-def _is_sdim(member: dict[str, Any]) -> bool:
-    """Return True for BHS SDim special/scene members."""
-    return (
-        bool(member.get("memberID"))
-        and member.get("memberType") == 19
-        and str(member.get("version") or "").casefold() == "sdim"
-    )
-
-
-def _is_stop_dim(member: dict[str, Any]) -> bool:
-    return _is_sdim(member) and str(member.get("name") or "").casefold() == "stop dim"
-
-
-def _is_group_reset(member: dict[str, Any]) -> bool:
-    return _is_sdim(member) and str(member.get("name") or "").casefold() == "groepsreset dim"
+    return is_dimmer(member)
 
 
 async def async_setup_entry(
@@ -48,12 +30,27 @@ async def async_setup_entry(
     coordinator: BHSCoordinator = entry.runtime_data
     entities: list[ButtonEntity] = []
 
+    # Reuse the exact same validated, name-independent SDim mapping as
+    # scene discovery and the REST command allowlists.
+    validated = validated_sdim_members(coordinator.members)
     for member in coordinator.members:
-        if _is_dimmer(member):
+        if _is_dimmer(member) and (
+            not isinstance(coordinator.api, BHSRestApi) or member.get("group") == 5
+        ):
             entities.append(BHSStartDimButton(coordinator, member))
-        elif _is_stop_dim(member):
+
+        role = sdim_role(member)
+        if role not in ("stop_dim", "group_reset"):
+            continue
+        key = (member.get("group"), member.get("address"))
+        if validated.get(key) is not member:
+            continue
+        if role == "stop_dim":
+            # A validated SDim Stop member is safe to expose per group.
+            # Starting cyclic dimming remains restricted to vetted channels.
             entities.append(BHSStopDimButton(coordinator, member))
-        elif _is_group_reset(member):
+        elif role == "group_reset":
+            # Same-group scene OFF already uses the validated reset member.
             entities.append(BHSGroupResetDimButton(coordinator, member))
 
     async_add_entities(entities)

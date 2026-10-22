@@ -32,7 +32,15 @@
   "options": {
     "step": {
       "init": {
-        "title": "BHS options",
+        "title": "BHS settings",
+        "menu_options": {
+          "general": "Connection and exports",
+          "member_mapping": "Member roles (relays, EXU, SoftM)",
+          "cover_mapping": "Shutter direction mapping"
+        }
+      },
+      "general": {
+        "title": "Connection and exports",
         "description": "Configure how frequently Home Assistant polls the BHS controller.",
         "data": {
           "scan_interval": "Polling interval (seconds)",
@@ -47,7 +55,39 @@
           "dimmer_export_id": "Mobile export configured in BLConfig for DIM1K brightness telegrams.",
           "exu_export_id": "Mobile export for EXU members; standard EXU mode control does not require it."
         }
+      },
+      "member_mapping": {
+        "title": "Select BHS member",
+        "description": "Choose the BHS member you want to classify. Members are displayed by name, type, group and address.",
+        "data": {
+          "member": "BHS member"
+        }
+      },
+      "cover_mapping": {
+        "title": "Select shutter or screen",
+        "description": "Choose the shutter pair to configure. Each choice shows the two BHS channel names and bus addresses.",
+        "data": {
+          "cover": "Shutter / screen"
+        }
+      },
+      "member_role": {
+        "title": "Configure BHS member",
+        "description": "**{member_name}** (group {group}, address {address})\nMember ID: {member_id}\n\nChoose how Home Assistant should expose this member.",
+        "data": {
+          "role": "Entity type / behavior"
+        }
+      },
+      "cover_direction": {
+        "title": "Confirm shutter direction",
+        "description": "**{first_name}** / **{second_name}** (group {group}, addresses {first_address}–{second_address}).\n\nSelect which relay OPENS the shutter. The other relay will CLOSE it. If unsure, select Disabled. Confirm actual wiring before operating the motor.",
+        "data": {
+          "opening_relay": "Opening relay"
+        }
       }
+    },
+    "abort": {
+      "no_members": "No supported members were found",
+      "no_covers": "No complete shutter pairs were found"
     }
   }
 }

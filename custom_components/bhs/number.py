@@ -12,7 +12,9 @@ from .const import CONF_DIMMER_MIN_BRIGHTNESS, CONF_COVER_TRAVEL_TIMES
 from .coordinator import BHSCoordinator
 from .entity import BHSEntity
 from .rest_api import BHSRestApi
-from .cover import _cover_pairs, _cover_name
+from .cover import _cover_name
+from .member_registry import cover_pairs
+from .cover_identity import pair_identity
 
 
 async def async_setup_entry(
@@ -30,8 +32,8 @@ async def async_setup_entry(
         if coordinator.api.supports_brightness(str(member.get("memberID") or ""))
     ]
     entities.extend(
-        BHSCoverTravelTime(coordinator, entry, up, down)
-        for up, down in _cover_pairs(coordinator.members)
+        BHSCoverTravelTime(coordinator, entry, up, down, pair_identity(hass, up, down))
+        for up, down in cover_pairs(coordinator.members, coordinator.cover_directions)
     )
     async_add_entities(entities)
 
@@ -84,12 +86,10 @@ class BHSCoverTravelTime(BHSEntity, NumberEntity):
     _attr_mode = NumberMode.BOX
     _attr_icon = "mdi:timer-outline"
 
-    def __init__(self, coordinator, entry, open_member, close_member):
+    def __init__(self, coordinator, entry, open_member, close_member, stable_unique_id):
         super().__init__(coordinator, open_member)
         self._entry = entry
-        self._cover_unique_id = (
-            f"{open_member['memberID']}_{close_member['memberID']}_cover"
-        )
+        self._cover_unique_id = stable_unique_id
         self._attr_unique_id = f"{self._cover_unique_id}_travel_time"
         self._attr_name = f"{_cover_name(open_member, close_member)} Travel time"
 

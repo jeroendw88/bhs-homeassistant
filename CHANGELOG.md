@@ -1,3 +1,81 @@
+## v0.4.3 — Universal member discovery (stable)
+
+- Promote the user-tested v0.4.3rc2 implementation without changing control logic.
+- Discover supported members primarily from BHS MemberType and module metadata.
+- Classify relays and configure optional EXU/SoftM controls by member name, storing member IDs.
+- Configure shutter direction by discovered relay names while preserving cover IDs and travel-time settings.
+- Identify SDim group reset (219), Stop Dim (220), scene slots (221–228), and record slot (229) by address.
+- Use validated mobile export DATAW/TIMER actions for absolute DIM1K brightness; keep existing safety checks.
+- Include release-candidate fixes for group-6 Stop Dim and event-loop-safe cover timer updates.
+
+**Compatibility note:** Alternative hardware groups, untested EXU/SoftM behaviors, and new BHS installations have not been physically verified. Keep a Home Assistant backup before upgrading.
+
+## v0.4.3rc2 — Cover timer safety and group Stop Dim fix
+
+- Fix shutter completion timer callback running in a worker thread; register it as an event-loop callback to safely update Home Assistant state.
+- Restore Stop Dim buttons for validated SDim groups beyond group 5 (including group 6).
+- Allow REST Stop Dim for unambiguous MemberType 19 / SDim address 220 members, while restricting cyclic Start Dim to the previously validated group 5.
+- Preserve unique IDs, scene and shutter mappings, dimmer brightness settings and existing feature behavior.
+
+## v0.4.3rc1 — Release candidate for universal member discovery
+
+- Carry forward all tested v0.4.3b1–b7 discovery, member role options, shutter pairing/identities, SDim address classification and export-validated DIM1K brightness controls.
+- Fix non-group-5 export-validated DIM1K lights missing from entity creation; unvalidated, untested non-group-5 dimmers are not exposed for REST control.
+- Report the correct integration version in diagnostics instead of a stale `0.4.0`.
+- Remove unused legacy name-gating helpers and switch Stop Dim/Group Reset button discovery to validated SDim addresses; retain the group-5 restriction for cyclic dimming.
+- Update README for release-candidate deployment, memberType mapping and validation precautions.
+- Static and standalone regression tests included with release package (see `tests/`).
+
+**Not yet physically validated:** other DIM1K groups, new EXU/SoftM wiring or brand-new installations. Publish as a prerelease until field-tested.
+
+## v0.4.3b7 — Export-driven DIM1K brightness (beta)
+
+- Discover DIM1K channels from `memberType=2` and module metadata without DIM_ naming.
+- Match brightness commands using memberID, group/address metadata and the configured, authorized BHS mobile export.
+- Require a validated DATAW/TIMER sequence (actions, functions, registers, flanks and byte bounds) but load TIMER MSB from the export instead of assuming 101.
+- Remove group-5 limitation on absolute-brightness commands; cyclic dimming remains restricted to the existing group-5 implementation.
+- Reject duplicate or ambiguous exported command mappings.
+- Unexported channels (e.g., DIM_0_RESERVE) have no absolute-brightness slider; no raw bus commands are invented for them.
+- Preserve member-based entity IDs, minimum brightness settings and persisted last-commanded levels.
+- Other features unchanged from v0.4.3b6.
+
+## v0.4.3b6 — Address-based SDim discovery (beta)
+
+- Identify SDim group reset (219), stop dim (220), scene slots (221–228), and record scene (229) by `memberType=19`, version `SDim`, group and address rather than by display names.
+- Support scene discovery in any BHS group with an unambiguous group-reset member; preserve scene member-based entity unique IDs.
+- Never expose record-scene as an automatically writable entity.
+- Refuse ambiguous duplicate SDim addresses; only unambiguous groups get scene control.
+- Retain existing group-5 restriction for cyclic DIM1K commands and stop-dim.
+- Based on v0.4.3b5; existing shutter identity, mapping, travel-time and member-role changes retained.
+
+## 0.4.3b5 — Direction-independent shutter names (preview)
+
+- Preserve a shutter’s displayed name when its Open/Close relay mapping is reversed.
+- Identify `_OP` / `_NEER` suffixes on either member, regardless of assigned direction.
+- Keep direction-independent fallback labels stable if no naming convention is used.
+- Keep entity IDs, travel-time settings, and command logic unchanged.
+
+## 0.4.3b4 — Stable shutter identity (preview)
+
+- Preserve existing Home Assistant cover and travel-time number unique IDs when reversing Open/Close relays.
+- Resolve a pair's identity from the existing entity registry, independent of current direction.
+- Carry forward the previously configured travel time if its old orientation-specific key differs.
+- Keep BHS member command validation and the working shutter movement logic unchanged.
+- Upgrade note: after installing, verify one cover and its travel-time number before changing any live relay direction.
+
+## 0.4.3b3 — Named shutter pairing
+
+- Shutter mapping now selects a pair by both BHS member names and bus address.
+- Separate direction step identifies opening relay by name; opposite relay becomes closing relay.
+- Existing mapping is preselected and remains stored by immutable member IDs.
+- Invalid or incomplete pairs are not made writable.
+
+## v0.4.3b2 — Named member selection
+
+- Member mapping now selects a member from a human-readable drop-down (BHS name, category, group and address).
+- A separate role screen shows the member name and stores the assignment using the immutable memberID.
+- No changes to entity discovery, controls or persisted mappings.
+
 ## 0.4.2 — EXU controls, configurable exports and cover timing
 
 - Add `EXU_192` Manual/Automatic mode switches for known `BWM_*` members, with Set/Reset command and state support.
@@ -139,3 +217,12 @@ Encrypted REST operation, additional SoftM categories, and group-6 continuous di
 ## 0.4.0b6
 - Enable narrowly allowlisted BWM SoftM bypass/down Set/Reset commands in REST mode.
 - Preserve all previously tested REST and legacy operations.
+
+## 0.4.3b1 (preview)
+- Added memberType/module-version discovery and persisted member-ID role mappings.
+- Removed `DIM_` naming requirement for supported group-5 DIM1K channels.
+- Added options UI to configure relay, EXU and SoftM roles.
+- Added options UI to confirm direction for unnamed type-20 shutter relay pairs.
+- Preserved legacy classification and command restrictions for existing installations.
+- Kept unrecognized relay commands blocked until explicit classification and
+  EXU/SoftM commands opt-in only.
