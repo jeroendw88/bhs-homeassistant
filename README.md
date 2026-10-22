@@ -1,6 +1,5 @@
 # BHS — Home Assistant custom integration
 
-**Release candidate: 0.4.3**  
 A local Home Assistant custom integration for the B-Logicx Home Server (BHS), supporting the new REST API and legacy DataSnap.
 
 ## Supported functionality
