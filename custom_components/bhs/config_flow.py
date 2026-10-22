@@ -16,6 +16,8 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .api import BHSApi
 from .rest_api import BHSRestApi
 from .const import (
+    CONF_DIMMER_EXPORT_ID, CONF_EXU_EXPORT_ID,
+    DEFAULT_DIMMER_EXPORT_ID, DEFAULT_EXU_EXPORT_ID,
     CONF_SCAN_INTERVAL,
     CONF_DEVICE_ID,
     CONF_PROTOCOL,
@@ -37,7 +39,9 @@ async def _validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str
     if data.get(CONF_PROTOCOL) == PROTOCOL_REST:
         api = BHSRestApi(async_get_clientsession(hass),
                          str(data[CONF_HOST]), int(data[CONF_PORT]),
-                         str(data[CONF_DEVICE_ID]))
+                         str(data[CONF_DEVICE_ID]),
+                         dimmer_export_id=int(data.get(CONF_DIMMER_EXPORT_ID, DEFAULT_DIMMER_EXPORT_ID)),
+                         exu_export_id=int(data.get(CONF_EXU_EXPORT_ID, DEFAULT_EXU_EXPORT_ID)))
     else:
         api = BHSApi(async_get_clientsession(hass),
                      str(data[CONF_HOST]), int(data[CONF_PORT]))
@@ -78,6 +82,8 @@ class BHSConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_HOST: str(user_input[CONF_HOST]).strip(),
                         CONF_PORT: int(user_input[CONF_PORT]),
                         CONF_PROTOCOL: user_input.get(CONF_PROTOCOL, PROTOCOL_LEGACY),
+                        CONF_DIMMER_EXPORT_ID: int(user_input.get(CONF_DIMMER_EXPORT_ID, DEFAULT_DIMMER_EXPORT_ID)),
+                        CONF_EXU_EXPORT_ID: int(user_input.get(CONF_EXU_EXPORT_ID, DEFAULT_EXU_EXPORT_ID)),
                         **({CONF_DEVICE_ID: user_input[CONF_DEVICE_ID]}
                            if user_input.get(CONF_PROTOCOL) == PROTOCOL_REST else {}),
                     },
@@ -85,10 +91,12 @@ class BHSConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         schema = vol.Schema(
             {
-                vol.Required(CONF_HOST, default="192.168.10.7"): str,
+                vol.Required(CONF_HOST): str,
                 vol.Required(CONF_PROTOCOL, default=PROTOCOL_LEGACY): vol.In(
                     [PROTOCOL_LEGACY, PROTOCOL_REST]),
                 vol.Optional(CONF_DEVICE_ID, default=""): str,
+                vol.Required(CONF_DIMMER_EXPORT_ID, default=DEFAULT_DIMMER_EXPORT_ID): vol.All(vol.Coerce(int), vol.Range(min=1)),
+                vol.Required(CONF_EXU_EXPORT_ID, default=DEFAULT_EXU_EXPORT_ID): vol.All(vol.Coerce(int), vol.Range(min=1)),
                 vol.Required(CONF_PORT, default=DEFAULT_PORT): vol.All(
                     vol.Coerce(int), vol.Range(min=1, max=65535)
                 ),
@@ -111,7 +119,8 @@ class BHSOptionsFlow(OptionsFlowWithReload):
     ) -> ConfigFlowResult:
         """Manage BHS options."""
         if user_input is not None:
-            return self.async_create_entry(data=user_input)
+            # Keep per-entity settings saved by number entities.
+            return self.async_create_entry(data={**self.config_entry.options, **user_input})
 
         current = {**self.config_entry.data, **self.config_entry.options}
         schema = vol.Schema(
@@ -121,11 +130,11 @@ class BHSOptionsFlow(OptionsFlowWithReload):
                 vol.Required(CONF_PORT, default=current.get(CONF_PORT, DEFAULT_PORT)):
                     vol.All(vol.Coerce(int), vol.Range(min=1, max=65535)),
                 vol.Optional(CONF_DEVICE_ID, default=current.get(CONF_DEVICE_ID, "")): str,
+                vol.Required(CONF_DIMMER_EXPORT_ID, default=current.get(CONF_DIMMER_EXPORT_ID, DEFAULT_DIMMER_EXPORT_ID)): vol.All(vol.Coerce(int), vol.Range(min=1)),
+                vol.Required(CONF_EXU_EXPORT_ID, default=current.get(CONF_EXU_EXPORT_ID, DEFAULT_EXU_EXPORT_ID)): vol.All(vol.Coerce(int), vol.Range(min=1)),
                 vol.Required(
                     CONF_SCAN_INTERVAL,
-                    default=self.config_entry.options.get(
-                        CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_SECONDS
-                    ),
+                    default=current.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_SECONDS),
                 ): vol.All(
                     vol.Coerce(int),
                     vol.Range(

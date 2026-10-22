@@ -9,11 +9,15 @@
           "host": "Host",
           "port": "HTTP-poort",
           "protocol": "API protocol",
-          "device_id": "Registered device UUID (REST only)"
+          "device_id": "Registered device UUID (REST only)",
+          "dimmer_export_id": "Dimmer export ID",
+          "exu_export_id": "EXU export ID"
         },
         "data_description": {
           "host": "IP-adres of hostnaam van de BHS-controller.",
-          "port": "DataSnap HTTP-poort. De standaard BHS-poort is 10014."
+          "port": "DataSnap HTTP-poort. De standaard BHS-poort is 10014.",
+          "dimmer_export_id": "Mobile export configured in BLConfig for DIM1K brightness telegrams.",
+          "exu_export_id": "Mobile export for EXU members; standard EXU mode control does not require it."
         }
       }
     },
@@ -34,10 +38,14 @@
           "scan_interval": "Pollinginterval (seconden)",
           "protocol": "API protocol",
           "port": "HTTP port",
-          "device_id": "Registered device UUID (REST only)"
+          "device_id": "Registered device UUID (REST only)",
+          "dimmer_export_id": "Dimmer export ID",
+          "exu_export_id": "EXU export ID"
         },
         "data_description": {
-          "scan_interval": "Hoe vaak alle BHS-statussen worden vernieuwd. Toegestaan bereik: 1–60 seconden."
+          "scan_interval": "Hoe vaak alle BHS-statussen worden vernieuwd. Toegestaan bereik: 1–60 seconden.",
+          "dimmer_export_id": "Mobile export configured in BLConfig for DIM1K brightness telegrams.",
+          "exu_export_id": "Mobile export for EXU members; standard EXU mode control does not require it."
         }
       }
     }

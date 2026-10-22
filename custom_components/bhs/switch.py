@@ -11,6 +11,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import BHSCoordinator
 from .entity import BHSEntity
+from .rest_api import BHSRestApi
 
 
 
@@ -32,6 +33,19 @@ def _is_soft_member(member: dict[str, Any]) -> bool:
         bool(member.get("memberID"))
         and member.get("memberType") == 4
         and str(member.get("version") or "").casefold() == "softm"
+    )
+
+
+def _is_exu_motion_mode(member: dict[str, Any]) -> bool:
+    """A tested outdoor EXU mode; never include the reserve channel."""
+    return (
+        bool(member.get("memberID"))
+        and member.get("group") == 1
+        and member.get("address") in (101, 102, 103, 104)
+        and member.get("memberType") == 17
+        and str(member.get("version") or "").casefold() == "exu_192"
+        and str(member.get("name") or "").casefold()
+        in {"bwm_parking", "bwm_terras", "bwm_voordeur", "bwm_garage"}
     )
 
 
@@ -86,6 +100,13 @@ async def async_setup_entry(
         for member in coordinator.members
         if _is_soft_member(member)
     )
+
+    if isinstance(coordinator.api, BHSRestApi):
+        entities.extend(
+            BHSExuModeSwitch(coordinator, member)
+            for member in coordinator.members
+            if _is_exu_motion_mode(member)
+        )
 
     group_resets = _group_reset_members(coordinator.members)
     for member in coordinator.members:
@@ -192,4 +213,46 @@ class BHSSDimSceneSwitch(BHSEntity, SwitchEntity):
         """Expose BHS metadata plus the group reset member used for OFF."""
         attrs = dict(super().extra_state_attributes)
         attrs["bhs_group_reset_member_id"] = self._group_reset_member_id
+        return attrs
+
+
+class BHSExuModeSwitch(BHSEntity, SwitchEntity):
+    """EXU operating mode: On = manual, Off = automatic.
+
+    State reflects last observed Set/Reset bus message, not physical motion.
+    """
+
+    _attr_icon = "mdi:motion-sensor"
+
+    def __init__(self, coordinator: BHSCoordinator, member: dict[str, Any]) -> None:
+        super().__init__(coordinator, member)
+        # Keep separate from existing entity identifiers and motion sensors.
+        self._attr_unique_id = f"{self.member_id}_exu_manual_mode"
+        self._attr_name = f"{member.get('name') or self.member_id} Manual mode"
+
+    @property
+    def is_on(self) -> bool | None:
+        state = self.coordinator.data.get(self.member_id)
+        if not isinstance(state, str):
+            return None
+        if state.casefold() == "set":
+            return True
+        if state.casefold() == "reset":
+            return False
+        return None
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Select manual mode by Set."""
+        await self.coordinator.api.command_member(self.member_id, "set")
+        await self.coordinator.async_request_refresh()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Select automatic mode by Reset."""
+        await self.coordinator.api.command_member(self.member_id, "reset")
+        await self.coordinator.async_request_refresh()
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        attrs = dict(super().extra_state_attributes)
+        attrs["mode_description"] = "Set = manual; Reset = automatic (last observed command)"
         return attrs

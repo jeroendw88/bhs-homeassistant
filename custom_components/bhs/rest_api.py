@@ -11,7 +11,8 @@ from .exceptions import BHSApiError, BHSConnectionError
 class BHSRestApi:
     """Use a previously registered device UUID; never register automatically."""
 
-    def __init__(self, session: ClientSession, host: str, port: int, device_id: str) -> None:
+    def __init__(self, session: ClientSession, host: str, port: int, device_id: str,
+                 dimmer_export_id: int = 2, exu_export_id: int = 7) -> None:
         self._session = session
         self._host = host.strip().removeprefix("http://").removeprefix("https://").rstrip("/")
         self._port = port
@@ -28,6 +29,9 @@ class BHSRestApi:
         self._allowed_start_dim_ids: set[str] = set()
         self._allowed_stop_dim_ids: set[str] = set()
         self._allowed_soft_ids: set[str] = set()
+        self._allowed_exu_ids: set[str] = set()
+        self.dimmer_export_id = dimmer_export_id
+        self.exu_export_id = exu_export_id  # Reserved for dedicated EXU export APIs.
         self._brightness_actions: dict[str, tuple[int, str, int, int]] = {}
         self._brightness_lock = asyncio.Lock()
 
@@ -172,6 +176,19 @@ class BHSRestApi:
             and str(m.get("name", "")).casefold().startswith("bwm_")
             and str(m.get("name", "")).casefold().endswith(("_bypass", "_down"))
         }
+        # EXU_192 outdoor motion detector operating modes (not motion events).
+        # Only the four physically tested BWM members are writable; reserve
+        # channels and any other EXU modules remain excluded.
+        self._allowed_exu_ids = {
+            str(m["memberID"]) for m in valid_members
+            if m.get("memberType") == 17
+            and str(m.get("version", "")).casefold() == "exu_192"
+            and m.get("group") == 1
+            and m.get("address") in (101, 102, 103, 104)
+            and str(m.get("name", "")).casefold() in {
+                "bwm_parking", "bwm_terras", "bwm_voordeur", "bwm_garage"
+            }
+        }
         # Find exported DATAW/Timer pairs dynamically. Never derive physical
         # bus bytes from an arbitrary member ID or trust button captions alone.
         self._brightness_actions = {}
@@ -182,9 +199,9 @@ class BHSRestApi:
                 if isinstance(e, dict) and e.get("allowed") is True
                 and isinstance(e.get("iD"), int)
             }
-            # The tested dimmer export is ID 2. Other exports are not enabled.
-            if 2 in allowed:
-                content = await self._request("POST", "/exports/content", {"exportID": 2})
+            # Use the configured, authorized dimmer export.
+            if self.dimmer_export_id in allowed:
+                content = await self._request("POST", "/exports/content", {"exportID": self.dimmer_export_id})
                 candidates: dict[str, tuple[int, str, int, int]] = {}
                 duplicates: set[str] = set()
                 for room in content.get("rooms", []):
@@ -210,7 +227,7 @@ class BHSRestApi:
                             continue
                         if member_id in candidates:
                             duplicates.add(member_id)
-                        candidates[member_id] = (2, str(button.get("caption") or member["name"]),
+                        candidates[member_id] = (self.dimmer_export_id, str(button.get("caption") or member["name"]),
                                                  timer["lsb"], timer["msb"])
                 self._brightness_actions = {key: val for key, val in candidates.items()
                                             if key not in duplicates}
@@ -270,13 +287,14 @@ class BHSRestApi:
             or (member_id in (self._allowed_scene_ids | self._allowed_scene_reset_ids)
                 and function == "dimmer")
             or (member_id in self._allowed_soft_ids and function in ("set", "reset"))
+            or (member_id in self._allowed_exu_ids and function in ("set", "reset"))
             or (member_id in (self._allowed_start_dim_ids | self._allowed_stop_dim_ids)
                 and function == "dimmer")
         )
         if not permitted:
             raise BHSApiError(
                 "REST command blocked: supported operations are relay/DIM1K "
-                "Set/Reset, approved SDim scenes, group-5 Start/Stop Dimmer, and approved BWM SoftM controls only"
+                "Set/Reset, approved SDim scenes, group-5 Start/Stop Dimmer, approved BWM SoftM controls, and validated EXU modes only"
             )
         return await self._request(
             "POST", "/members/command",

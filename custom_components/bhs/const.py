@@ -21,3 +21,10 @@ PLATFORMS = ["light", "button", "binary_sensor", "switch", "cover", "sensor", "n
 
 CONF_DIMMER_MIN_BRIGHTNESS = "dimmer_min_brightness"
 DEFAULT_DIMMER_MIN_BRIGHTNESS = 5
+
+CONF_DIMMER_EXPORT_ID = "dimmer_export_id"
+CONF_EXU_EXPORT_ID = "exu_export_id"
+DEFAULT_DIMMER_EXPORT_ID = 2
+DEFAULT_EXU_EXPORT_ID = 7
+CONF_COVER_TRAVEL_TIMES = "cover_travel_times"
+DEFAULT_COVER_TRAVEL_SECONDS = 30

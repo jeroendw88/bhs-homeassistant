@@ -1,3 +1,27 @@
+## 0.4.2 — EXU controls, configurable exports and cover timing
+
+- Add `EXU_192` Manual/Automatic mode switches for known `BWM_*` members, with Set/Reset command and state support.
+- Make dimmer export ID (default 2) and EXU export ID (default 7) configurable in integration options. EXU mode switching remains independent of exports.
+- Add per-cover persistent **Travel time** configuration numbers. After `_OP` or `_NEER` stays Set continuously for the configured duration, infer Open or Closed respectively; interrupted movement becomes Unknown. This is estimated, not measured position.
+- Fix BHS configuration options flow error caused by malformed `dict.get()` usage in the first beta.
+- Preserve v0.4.1 dimmer brightness, minimum brightness and brightness memory, plus existing REST, events, and DataSnap support.
+
+## v0.4.2b2 — Configurable exports and cover travel-time estimation
+
+- Configure dimmer/EXU export IDs via integration options; replace hard-coded dimmer export ID 2.
+- Per-cover persisted travel-time configuration numbers.
+- Infer fully open/closed after direction relay remains Set for travel duration.
+- Preserve v0.4.2b1 EXU modes, v0.4.1 brightness and memory, and earlier REST behavior.
+
+## 0.4.2b1 — EXU_192 manual/automatic mode preview
+
+- Discover tested outdoor EXU_192 members (group 1, addresses 101–104) as dedicated operating-mode switches in REST mode.
+- On sends Set (manual mode); Off sends Reset (automatic mode), using `/api/members/command`.
+- States reflect the last observed BHS Set/Reset telegram via the existing coordinator, including event updates and periodic snapshots.
+- Unknown is retained until the BHS server knows the member state. These are not motion-activity sensors.
+- Exclude EXU_RESERVE and unrelated EXU/SoftM members. No timer changes, export-specific endpoints or raw bus writes.
+- Keep 0.4.1 brightness, scene, cover, legacy and diagnostic code otherwise unchanged.
+
 # Changelog
 
 ## 0.4.1 — 2026-10-18

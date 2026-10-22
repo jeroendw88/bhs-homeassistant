@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from time import monotonic
+from homeassistant.helpers.event import async_call_later
 from collections import defaultdict
 from typing import Any
 
@@ -13,6 +15,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import BHSCoordinator
 from .entity import BHSEntity
+from .const import DEFAULT_COVER_TRAVEL_SECONDS
 
 
 def _is_cover_member(member: dict[str, Any]) -> bool:
@@ -82,12 +85,10 @@ async def async_setup_entry(
 
 
 class BHSCover(BHSEntity, CoverEntity):
-    """A paired BHS roller shutter/screen.
+    """Paired BHS cover with elapsed-time endpoint inference.
 
-    BHS exposes two RLM members (up/open and down/close). Its configured roller
-    shutter mode turns an actuation into a timed movement. No position feedback
-    is exposed through the REST API, therefore this entity intentionally uses
-    assumed state and exposes no position slider.
+    Completion is inferred, not hardware position feedback. Only a continuously
+    observed Set relay for the configured travel time establishes an endpoint.
     """
 
     _attr_supported_features = (
@@ -96,13 +97,8 @@ class BHSCover(BHSEntity, CoverEntity):
     _attr_assumed_state = True
     _attr_icon = "mdi:window-shutter"
 
-    def __init__(
-        self,
-        coordinator: BHSCoordinator,
-        open_member: dict[str, Any],
-        close_member: dict[str, Any],
-    ) -> None:
-        """Initialize a paired BHS cover."""
+    def __init__(self, coordinator: BHSCoordinator, open_member: dict[str, Any],
+                 close_member: dict[str, Any]) -> None:
         super().__init__(coordinator, open_member)
         self.open_member = open_member
         self.close_member = close_member
@@ -111,55 +107,148 @@ class BHSCover(BHSEntity, CoverEntity):
         self._attr_unique_id = f"{self.open_member_id}_{self.close_member_id}_cover"
         self._attr_name = _cover_name(open_member, close_member)
         self._command_lock = asyncio.Lock()
+        self._active_direction: str | None = None
+        self._started_at: float | None = None
+        self._completed_position: str | None = None
+        self._timer_unsub = None
+
+    @property
+    def travel_seconds(self) -> int:
+        return self.coordinator.cover_travel_times.get(
+            self.unique_id, self.coordinator.cover_travel_default
+        )
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.coordinator.cover_entities[self.unique_id] = self
+        self._reconcile_relays()
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._cancel_timer()
+        self.coordinator.cover_entities.pop(self.unique_id, None)
+        await super().async_will_remove_from_hass()
+
+    def _cancel_timer(self) -> None:
+        if self._timer_unsub is not None:
+            self._timer_unsub()
+            self._timer_unsub = None
+
+    def _relay_direction(self) -> str | None:
+        if not self.coordinator.last_update_success:
+            return None
+        up = self.coordinator.data.get(self.open_member_id, "").casefold() == "set"
+        down = self.coordinator.data.get(self.close_member_id, "").casefold() == "set"
+        if up and not down:
+            return "open"
+        if down and not up:
+            return "closed"
+        return None
+
+    def _schedule_completion(self) -> None:
+        self._cancel_timer()
+        if self._active_direction is None or self._started_at is None:
+            return
+        remaining = self.travel_seconds - (monotonic() - self._started_at)
+        if remaining <= 0:
+            self._complete_if_still_active()
+        else:
+            self._timer_unsub = async_call_later(self.hass, remaining, self._timer_finished)
+
+    def _timer_finished(self, _now) -> None:
+        self._timer_unsub = None
+        self._complete_if_still_active()
+
+    def _complete_if_still_active(self) -> None:
+        if (self._active_direction is not None
+                and self._relay_direction() == self._active_direction
+                and self._started_at is not None
+                and monotonic() - self._started_at >= self.travel_seconds):
+            self._completed_position = self._active_direction
+            self.async_write_ha_state()
+
+    def _reconcile_relays(self) -> None:
+        if not self.coordinator.last_update_success:
+            return
+        direction = self._relay_direction()
+        if direction == self._active_direction:
+            if direction is not None:
+                self._complete_if_still_active()
+            return
+        self._cancel_timer()
+        previous = self._active_direction
+        if direction is None:
+            # A relay may have reset between polls after completing travel.
+            if (previous is not None and self._started_at is not None
+                    and monotonic() - self._started_at >= self.travel_seconds):
+                self._completed_position = previous
+            elif previous is not None and self._completed_position != previous:
+                self._completed_position = None
+            self._active_direction = None
+            self._started_at = None
+        else:
+            self._active_direction = direction
+            self._started_at = monotonic()
+            self._completed_position = None
+            self._schedule_completion()
+
+    def _handle_coordinator_update(self) -> None:
+        self._reconcile_relays()
+        super()._handle_coordinator_update()
+
+    def travel_time_changed(self) -> None:
+        if self._active_direction is not None:
+            self._schedule_completion()
+        self.async_write_ha_state()
 
     @property
     def is_opening(self) -> bool:
-        """Return whether the open/up relay currently reports Set."""
-        status = self.coordinator.data.get(self.open_member_id, "")
-        return status.casefold() == "set"
+        return self._active_direction == "open" and self._completed_position != "open"
 
     @property
     def is_closing(self) -> bool:
-        """Return whether the close/down relay currently reports Set."""
-        status = self.coordinator.data.get(self.close_member_id, "")
-        return status.casefold() == "set"
+        return self._active_direction == "closed" and self._completed_position != "closed"
 
     @property
-    def is_closed(self) -> None:
-        """Position/end-state is not available from BHS REST."""
+    def is_closed(self) -> bool | None:
+        if self.is_opening or self.is_closing:
+            return None
+        if self._completed_position == "closed":
+            return True
+        if self._completed_position == "open":
+            return False
         return None
 
     async def async_open_cover(self, **kwargs: Any) -> None:
-        """Start opening/up movement after de-energizing the down relay."""
         async with self._command_lock:
+            self._completed_position = None
             await self.coordinator.api.command_member(self.close_member_id, "reset")
             await self.coordinator.api.command_member(self.open_member_id, "set")
             await self.coordinator.async_request_refresh()
 
     async def async_close_cover(self, **kwargs: Any) -> None:
-        """Start closing/down movement after de-energizing the up relay."""
         async with self._command_lock:
+            self._completed_position = None
             await self.coordinator.api.command_member(self.open_member_id, "reset")
             await self.coordinator.api.command_member(self.close_member_id, "set")
             await self.coordinator.async_request_refresh()
 
     async def async_stop_cover(self, **kwargs: Any) -> None:
-        """Reset both direction members to request a stop."""
         async with self._command_lock:
+            self._cancel_timer()
+            self._completed_position = None
             await self.coordinator.api.command_member(self.open_member_id, "reset")
             await self.coordinator.api.command_member(self.close_member_id, "reset")
             await self.coordinator.async_request_refresh()
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose metadata for both paired BHS members."""
         attrs = super().extra_state_attributes
-        attrs.update(
-            {
-                "bhs_open_member_id": self.open_member_id,
-                "bhs_close_member_id": self.close_member_id,
-                "bhs_open_status": self.coordinator.data.get(self.open_member_id),
-                "bhs_close_status": self.coordinator.data.get(self.close_member_id),
-            }
-        )
+        attrs.update({
+            "bhs_open_member_id": self.open_member_id,
+            "bhs_close_member_id": self.close_member_id,
+            "bhs_open_status": self.coordinator.data.get(self.open_member_id),
+            "bhs_close_status": self.coordinator.data.get(self.close_member_id),
+            "bhs_travel_seconds": self.travel_seconds,
+            "bhs_position_feedback": "inferred_from_relay_duration",
+        })
         return attrs
