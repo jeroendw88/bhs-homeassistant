@@ -14,6 +14,28 @@ A local Home Assistant custom integration for the B-Logicx Home Server (BHS), su
 - **SoftM:** previously vetted member controls and explicitly opted-in SoftM switches; unknown SoftM commands stay blocked. Legacy DataSnap behavior is preserved.
 - **Diagnostics:** connection status, timestamps, event and synchronization counts, error counts, and privacy-conscious diagnostics export.
 
+## Device registration (v0.4.5 beta)
+
+New REST installations can choose **Register a new device** during setup.
+Home Assistant generates a new UUID v4 and RSA-2048 key pair, then submits the
+device name, `platf: android`, and PEM public key using
+`POST /api/device/register`. If BHS responds `Approved`, setup validates
+the connection and stores the registered UUID and private key in the Home
+Assistant config entry. If BHS responds `Pending`, an administrator must
+approve the device and assign required mobile exports before setup continues.
+
+The **Use registered UUID** path remains available for existing registered
+clients; updates to existing installations do not automatically reregister.
+The RSA key is retained locally but **encrypted BHS REST traffic remains
+unsupported**. Store Home Assistant backups securely because they may contain
+the private key. Do not share the UUID or private key.
+
+**Beta limitation:** Pending-registration credentials are held in the active
+setup flow and are not durable until approval completes. Keep the wizard open
+while awaiting approval; do not restart Home Assistant during registration.
+A registration timeout may have succeeded server-side: check the device list
+before attempting to register a different UUID.
+
 ## Requirements and configuration
 
 - Home Assistant **2026.8.0 or newer** (as specified in `hacs.json`; this is a package minimum, not a full compatibility matrix).
