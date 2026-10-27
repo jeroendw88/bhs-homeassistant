@@ -1,3 +1,16 @@
+## v0.4.4b1 — Export-backed EXU controls (beta)
+
+- Built from the published **v0.4.3** GitHub tag, preserving its SDim, shutter and DIM1K fixes.
+- Discover motion detectors from the configured EXU mobile export using `getMotionDetectorsByExport`.
+- Read the Manual mode state from the API's `manual` setting, not last observed bus Set/Reset; retain existing EXU switch unique IDs.
+- Switch mode using `setMotionDetector`.
+- Add a 0–255 Motion timer number and Timer in minutes configuration switch; write only the changed setting via `setMotionDetectorTimer`.
+- Reject module-programming failures (including HTTP 500/503) and expose a diagnostic failure attribute on timer entities.
+- Poll EXU export settings every 15 seconds separately from normal `getChanges` events.
+- Skip EXU members with null `manual` and unsupported timer values; leave `followInput` read-only.
+
+**Beta / caution:** Timer writes program device configuration (EEPROM). The BHS server may save settings even when it reports failed module programming; resolve failed operations in BLConfig before relying on them. BHS secured/encrypted REST mode remains unsupported.
+
 ## v0.4.3 — Universal member discovery (stable)
 
 - Promote the user-tested v0.4.3rc2 implementation without changing control logic.
