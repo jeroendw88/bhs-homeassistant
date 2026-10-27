@@ -235,6 +235,76 @@ class BHSRestApi:
             self._brightness_actions = {}
         return valid_members
 
+    async def get_motion_detectors_by_export(self) -> dict[str, dict[str, Any]]:
+        """Fetch export-authorized motion detector settings (no state-queue consumption)."""
+        response = await self._request(
+            "POST", "/members/getMotionDetectorsByExport",
+            {"exportID": self.exu_export_id},
+        )
+        detectors = response.get("motionDetectors")
+        if not isinstance(detectors, list):
+            raise BHSApiError("Unexpected motion detector export response")
+        # Use both the export membership and actual hardware metadata.
+        result: dict[str, dict[str, Any]] = {}
+        for detector in detectors:
+            if not isinstance(detector, dict):
+                continue
+            mid = detector.get("memberID")
+            if not isinstance(mid, str) or not mid:
+                continue
+            if detector.get("memberType") not in (5, 17):
+                continue
+            if not isinstance(detector.get("manual"), bool):
+                continue
+            timer = detector.get("timer")
+            if (not isinstance(timer, dict)
+                    or type(timer.get("value")) is not int
+                    or not 0 <= timer["value"] <= 255
+                    or type(timer.get("inMinutes")) is not bool):
+                continue
+            if mid in result:
+                # Fail closed on duplicate identifiers.
+                result.pop(mid, None)
+                continue
+            result[mid] = detector
+        return result
+
+    async def set_motion_detector_mode(self, member_id: str, manual: bool) -> None:
+        """Set manual/automatic through the validated mobile export API."""
+        if type(manual) is not bool or member_id not in self._allowed_exu_ids:
+            raise BHSApiError("Motion detector mode command not permitted")
+        response = await self._request(
+            "POST", "/members/setMotionDetector",
+            {"exportID": self.exu_export_id, "memberID": member_id, "manual": manual},
+        )
+        if (response.get("result") != "sent"
+                or response.get("memberID") != member_id
+                or response.get("manual") is not manual):
+            raise BHSApiError("BHS did not confirm the motion detector mode command")
+
+    async def set_motion_detector_timer(
+        self, member_id: str, *, timer: int | None = None,
+        in_minutes: bool | None = None,
+    ) -> None:
+        """Program one or both timer fields; HTTP 500/503 are hard failures."""
+        if member_id not in self._allowed_exu_ids:
+            raise BHSApiError("Motion detector timer command not permitted")
+        if timer is None and in_minutes is None:
+            raise BHSApiError("At least one timer field is required")
+        body: dict[str, Any] = {
+            "exportID": self.exu_export_id, "memberID": member_id,
+        }
+        if timer is not None:
+            if type(timer) is not int or not 0 <= timer <= 255:
+                raise BHSApiError("Motion timer must be an integer from 0 to 255")
+            body["timer"] = timer
+        if in_minutes is not None:
+            if type(in_minutes) is not bool:
+                raise BHSApiError("inMinutes must be a boolean")
+            body["inMinutes"] = in_minutes
+        # _request raises on HTTP 500/503 even if BHS persisted the value.
+        await self._request("POST", "/members/setMotionDetectorTimer", body)
+
     def supports_brightness(self, member_id: str) -> bool:
         return member_id in self._brightness_actions
 
