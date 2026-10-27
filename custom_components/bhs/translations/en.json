@@ -19,14 +19,57 @@
           "dimmer_export_id": "Mobile export configured in BLConfig for DIM1K brightness telegrams.",
           "exu_export_id": "Mobile export for EXU members; standard EXU mode control does not require it."
         }
+      },
+      "registration": {
+        "title": "Device registration",
+        "description": "Use an existing registered device UUID or register Home Assistant as a new BHS device.",
+        "data": {
+          "registration_method": "Registration method"
+        }
+      },
+      "existing_device": {
+        "title": "Connect to BHS",
+        "description": "Enter the local BHS controller address.",
+        "data": {
+          "host": "Host",
+          "port": "HTTP port",
+          "protocol": "API protocol",
+          "device_id": "Registered device UUID (REST only)",
+          "dimmer_export_id": "Dimmer export ID",
+          "exu_export_id": "EXU export ID"
+        },
+        "data_description": {
+          "host": "IP address or hostname of the BHS controller.",
+          "port": "DataSnap HTTP port. The default BHS port is 10014.",
+          "dimmer_export_id": "Mobile export configured in BLConfig for DIM1K brightness telegrams.",
+          "exu_export_id": "Mobile export for EXU members; standard EXU mode control does not require it."
+        }
+      },
+      "new_device": {
+        "title": "Register a new BHS device",
+        "description": "One-time registration: Home Assistant creates a UUID v4 and RSA key pair. BHS may require administrator approval.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "device_name": "Device name",
+          "dimmer_export_id": "Dimmer export ID",
+          "exu_export_id": "EXU export ID"
+        }
+      },
+      "await_approval": {
+        "title": "Waiting for BHS approval",
+        "description": "Device {device_id} has been registered. Ask a BHS administrator to approve it and assign the required exports. Submit this form to check again. Do not close the wizard: registration credentials are not permanently stored yet."
       }
     },
     "error": {
       "cannot_connect": "Unable to connect to the BHS controller",
-      "unknown": "Unexpected error"
+      "unknown": "Unexpected error",
+      "registration_failed": "Registration failed. Check the BHS log before retrying.",
+      "pending_approval": "Not yet approved, or controller unavailable."
     },
     "abort": {
-      "already_configured": "This BHS controller is already configured"
+      "already_configured": "This BHS controller is already configured",
+      "registration_session_lost": "Registration session lost; recover manually using the existing UUID and keys."
     }
   },
   "options": {
