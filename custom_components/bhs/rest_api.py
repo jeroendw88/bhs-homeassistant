@@ -38,7 +38,7 @@ class BHSRestApi:
         self._allowed_soft_ids: set[str] = set()
         self._allowed_exu_ids: set[str] = set()
         self.dimmer_export_id = dimmer_export_id
-        self.exu_export_id = exu_export_id  # Reserved for dedicated EXU export APIs.
+        self.exu_export_id = exu_export_id
         self._brightness_actions: dict[str, tuple[int, str, int, int]] = {}
         self._brightness_lock = asyncio.Lock()
 
@@ -156,10 +156,7 @@ class BHSRestApi:
             str(m["memberID"]) for m in valid_members
             if is_soft(m) and resolve_role(m, self.member_roles) == ROLE_SOFT
         }
-        self._allowed_exu_ids = {
-            str(m["memberID"]) for m in valid_members
-            if is_exu(m) and resolve_role(m, self.member_roles) == ROLE_EXU
-        }
+        self._allowed_exu_ids = set()  # Populated only by the authorized export
         # Find exported DATAW/Timer pairs dynamically. Never derive physical
         # bus bytes from an arbitrary member ID or trust button captions alone.
         self._brightness_actions = {}
@@ -246,6 +243,7 @@ class BHSRestApi:
             raise BHSApiError("Unexpected motion detector export response")
         # Use both the export membership and actual hardware metadata.
         result: dict[str, dict[str, Any]] = {}
+        duplicates: set[str] = set()
         for detector in detectors:
             if not isinstance(detector, dict):
                 continue
@@ -262,11 +260,12 @@ class BHSRestApi:
                     or not 0 <= timer["value"] <= 255
                     or type(timer.get("inMinutes")) is not bool):
                 continue
-            if mid in result:
-                # Fail closed on duplicate identifiers.
+            if mid in result or mid in duplicates:
                 result.pop(mid, None)
+                duplicates.add(mid)
                 continue
             result[mid] = detector
+        self._allowed_exu_ids = set(result)
         return result
 
     async def set_motion_detector_mode(self, member_id: str, manual: bool) -> None:
@@ -355,7 +354,6 @@ class BHSRestApi:
             or (member_id in (self._allowed_scene_ids | self._allowed_scene_reset_ids)
                 and function == "dimmer")
             or (member_id in self._allowed_soft_ids and function in ("set", "reset"))
-            or (member_id in self._allowed_exu_ids and function in ("set", "reset"))
             or (member_id in (self._allowed_start_dim_ids | self._allowed_stop_dim_ids)
                 and function == "dimmer")
         )
