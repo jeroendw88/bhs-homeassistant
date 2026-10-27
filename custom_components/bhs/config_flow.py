@@ -72,7 +72,7 @@ class BHSConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Choose between a pre-registered ID and a fresh device registration."""
         if user_input is not None:
             if user_input["registration_method"] == "existing":
-                return await self.async_step_user()
+                return await self.async_step_existing_device()
             return await self.async_step_new_device()
         return self.async_show_form(
             step_id="registration",
@@ -114,7 +114,7 @@ class BHSConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "registration_failed"
             else:
                 if status == "Pending":
-                    return self.async_show_progress_done(next_step_id="await_approval")
+                    return await self.async_step_await_approval()
                 return await self._finish_registered_device(settings, device_id, private_key)
         return self.async_show_form(
             step_id="new_device",
@@ -170,7 +170,13 @@ class BHSConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Handle user setup."""
+        """Offer registration or existing UUID setup."""
+        return await self.async_step_registration(user_input)
+
+    async def async_step_existing_device(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Set up a previously registered device without modifying it."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -212,7 +218,7 @@ class BHSConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ),
             }
         )
-        return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
+        return self.async_show_form(step_id="existing_device", data_schema=schema, errors=errors)
 
     @staticmethod
     @callback
