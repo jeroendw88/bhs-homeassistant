@@ -10,6 +10,7 @@ A local Home Assistant custom integration for the B-Logicx Home Server (BHS), su
 - **Covers:** memberType 20 paired shutter/screen relays, with named direction-mapping options; reset opposite relay before activating a direction. Per-cover configurable travel time estimates completed opening/closing from continuous `_OP`/`_NEER` relay activation. An interrupted travel cycle leaves the endpoint unknown; the controller does not report actual physical position.
 - **DIM1K dimming:** group-5 Start Dim and Stop Dim actions; stop dimming explicitly. No automatic timeout is guaranteed.
 - **Scenes:** SDim memberType 19 scene slots (221–228), grouped with address 219 reset and 220 Stop Dim; name-independent classification. Supported scene on/off with group-reset semantics. Off may reset other scenes in the same group. Scene recording is excluded.
+- **EXU motion detectors (REST):** export-discovered EXU_192 (memberType 17) Manual/Automatic switches with live configuration feedback; writable motion hold-time (0–255) and seconds/minutes controls. Detectors with incomplete configuration or `manual: null` are not exposed. These are *configuration/operating-mode controls*, not live PIR occupancy sensors.
 - **SoftM:** previously vetted member controls and explicitly opted-in SoftM switches; unknown SoftM commands stay blocked. Legacy DataSnap behavior is preserved.
 - **Diagnostics:** connection status, timestamps, event and synchronization counts, error counts, and privacy-conscious diagnostics export.
 
@@ -28,10 +29,22 @@ A local Home Assistant custom integration for the B-Logicx Home Server (BHS), su
 - Brightness reflects the **last command sent by Home Assistant**, not a measured level; wall-switch dimming and scenes may make the reported level inaccurate.
 - The dimmer export ID is configurable under BHS Configure/Options (default 2). It must reference an export containing matching DATAW/TIMER actions. Do not issue guessed raw bus commands.
 
-### EXU control and cover travel time
+### EXU_192 motion detector control (v0.4.4, REST only)
 
-- Vetted legacy EXU_192 channels or EXU members explicitly enabled in Member Roles are exposed as Manual/Automatic mode switches (Set/Reset). These represent the last known mode command, **not** motion detection. Reserve EXU members are excluded.
-- The EXU export ID is configurable (default 7) for potential export-based functionality; the current mode switches use member commands and do not require an export.
+- Configure a BHS **EXU export ID** in **BHS → Configure/Options** (default **7**). The export must actually contain the motion detector modules, and your registered device must have access to that export.
+- The integration discovers supported EXU motion detectors using `POST /api/members/getMotionDetectorsByExport`. Discovery uses the stable `memberID`, not names such as `BWM_*`. Unsupported/incomplete entries and entries with `manual: null` (such as an unconfigured reserve module) are skipped.
+- Existing **Manual mode** switches retain their Home Assistant unique IDs. **On = Manual** and **Off = Automatic**. The switch reads the API-reported `manual` setting; writes use `POST /api/members/setMotionDetector`, rather than generic Set/Reset.
+- Two additional configuration entities per exported EXU:
+  - **Motion timer**: numeric value **0–255**.
+  - **Timer in minutes**: switch (**Off = seconds**, **On = minutes**).
+- These entities use `POST /api/members/setMotionDetectorTimer`. Only the changed field is sent: changing `timer` preserves `inMinutes`, and changing `inMinutes` preserves `timer`.
+- The integration refreshes exported motion detector settings approximately **every 15 seconds**, independently of the `getChanges` event queue; changes made elsewhere can therefore be reflected in Home Assistant.
+- `followInput` is exposed as a **read-only attribute**. When enabled, the timer can still be saved but **does not affect** that detector's behavior.
+- **Timer writes program module configuration/EEPROM**. Avoid frequent automated writes. HTTP 500 or 503 (including `programming the module failed`) is treated as a **failed operation**, even though BHS may already have saved the setting. Timer entities expose `bhs_module_programming_failed`; verify/reprogram in BLConfig if necessary.
+- These settings **do not provide a live motion-detected (PIR occupancy) binary sensor**. A Manual mode switch is not a motion sensor.
+
+### Cover travel time
+
 - Each confirmed memberType 20 cover pair has a **Travel time** configuration number (default 30 seconds). A relay staying Set for the full duration results in an estimated Open/Closed state; stopping early gives Unknown. No actual position measurement or partial-position estimation is available.
 
 ### Manual upgrade
@@ -41,8 +54,10 @@ A local Home Assistant custom integration for the B-Logicx Home Server (BHS), su
 
 ```sh
 cd /config
-cp -a custom_components/bhs custom_components/bhs_backup_pre_rc1
-unzip -o bhs-hacs-v0.4.3.zip 'custom_components/*' -d /config/
+cp -a custom_components/bhs custom_components/bhs_backup_pre_v044
+# If downloading a GitHub source ZIP, first extract its top-level folder:
+unzip -o bhs-homeassistant-0.4.4.zip
+cp -a bhs-homeassistant-0.4.4/custom_components/bhs/. /config/custom_components/bhs/
 ha core restart
 ```
 
@@ -50,7 +65,7 @@ ha core restart
 
 ### HACS
 
-Repository layout includes `custom_components/bhs`, `hacs.json`, this README and a changelog. To distribute updates through HACS, place these files at the root of your GitHub custom-integration repository, commit them, and create a GitHub pre-release tag `v0.4.3`. This is a release candidate; do not publish as stable until validated. A locally created ZIP alone does **not** publish a HACS update. Public HACS catalog submission requires additional validation; adding the repository as a custom HACS repository does not require public catalog acceptance.
+Repository layout includes `custom_components/bhs`, `hacs.json`, this README and a changelog. To distribute updates through HACS, place these files at the root of your GitHub custom-integration repository, commit them, and create a GitHub release tagged `v0.4.4` from `main`. For a stable release, leave **Set as a pre-release** unchecked. A locally created ZIP alone does **not** publish a HACS update. Public HACS catalog submission requires additional validation; adding the repository as a custom HACS repository does not require public catalog acceptance.
 
 ## Known limitations
 
@@ -59,15 +74,16 @@ Repository layout includes `custom_components/bhs`, `hacs.json`, this README and
 - Diagnostic entities may be unavailable if the integration cannot initialize during setup; recovery after a network failure without reload has not been independently validated in a controlled outage test.
 - A registered UUID should have only **one `getChanges` consumer**. Do not poll it simultaneously from a separate script.
 - Integration counters reset on reload, and event updates may lag up to the configured polling interval (2 seconds by default).
+- EXU export configuration is refreshed periodically (about 15 seconds), rather than via instantaneous motion events. Module timer programming failures may leave BHS stored settings differing from module settings.
 
 For changes by release, see [CHANGELOG.md](CHANGELOG.md).
 
-## v0.4.3 upgrade validation
+## v0.4.4 upgrade validation
 
 1. Create a full Home Assistant backup; copy `/config/custom_components/bhs` before replacing it.
 2. Install over the existing integration **without deleting/re-adding the BHS config entry**.
-3. Confirm lights, sockets, nine exported dimmers, shutter entity IDs, travel-time numbers, EXU mode switches, and SDim scenes.
+3. Confirm lights, sockets, exported dimmers, shutter entity IDs, travel-time numbers, EXU mode switches, EXU timer values/units, and SDim scenes.
 4. Test one representative command per device category and check BHS diagnostic sensors.
 5. On a fresh installation, assign ambiguous relay roles and shutter opening direction explicitly in **BHS → Configure** before commanding hardware.
 
-**Safety boundary:** An unknown RLM relay can appear as a generic switch but will not receive REST Set/Reset writes until mapped. Unknown EXU/SoftM modules require explicit opt-in. Record Scene (SDim address 229) remains blocked. Group-5-only cyclic dimming has not been generalized.
+**Safety boundary:** An unknown RLM relay can appear as a generic switch but will not receive REST Set/Reset writes until mapped. EXU writes require membership in the selected export and valid motion-detector configuration; unknown SoftM modules require explicit opt-in. Record Scene (SDim address 229) remains blocked. Group-5-only cyclic dimming has not been generalized.
