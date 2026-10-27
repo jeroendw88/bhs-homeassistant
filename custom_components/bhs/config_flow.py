@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from uuid import UUID
 from typing import Any
 
 import voluptuous as vol
@@ -15,6 +16,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import BHSApi
 from .rest_api import BHSRestApi
+from .registration import create_device_credentials, register_bhs_device
 from .const import (
     CONF_DIMMER_EXPORT_ID, CONF_EXU_EXPORT_ID,
     DEFAULT_DIMMER_EXPORT_ID, DEFAULT_EXU_EXPORT_ID,
@@ -59,6 +61,111 @@ class BHSConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for BHS."""
 
     VERSION = 1
+
+    def __init__(self) -> None:
+        self._registration_settings: dict[str, Any] | None = None
+        self._registration_credentials: tuple[str, str, str] | None = None
+
+    async def async_step_registration(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Choose between a pre-registered ID and a fresh device registration."""
+        if user_input is not None:
+            if user_input["registration_method"] == "existing":
+                return await self.async_step_user()
+            return await self.async_step_new_device()
+        return self.async_show_form(
+            step_id="registration",
+            data_schema=vol.Schema({
+                vol.Required("registration_method", default="existing"):
+                    vol.In({"existing": "Use registered UUID", "new": "Register a new device"}),
+            }),
+        )
+
+    async def async_step_new_device(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Register a new device without losing its generated credentials."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            settings = {
+                CONF_HOST: str(user_input[CONF_HOST]).strip(),
+                CONF_PORT: int(user_input[CONF_PORT]),
+                CONF_PROTOCOL: PROTOCOL_REST,
+                CONF_DIMMER_EXPORT_ID: int(user_input[CONF_DIMMER_EXPORT_ID]),
+                CONF_EXU_EXPORT_ID: int(user_input[CONF_EXU_EXPORT_ID]),
+            }
+            # Don't generate another UUID on retries in the same config flow.
+            if self._registration_credentials is None:
+                self._registration_credentials = await self.hass.async_add_executor_job(
+                    create_device_credentials
+                )
+            self._registration_settings = settings
+            device_id, private_key, public_key = self._registration_credentials
+            try:
+                status = await register_bhs_device(
+                    async_get_clientsession(self.hass),
+                    settings[CONF_HOST], settings[CONF_PORT],
+                    device_id, public_key,
+                    str(user_input.get("device_name") or "Home Assistant"),
+                )
+            except BHSApiError:
+                _LOGGER.exception("BHS device registration failed")
+                errors["base"] = "registration_failed"
+            else:
+                if status == "Pending":
+                    return self.async_show_progress_done(next_step_id="await_approval")
+                return await self._finish_registered_device(settings, device_id, private_key)
+        return self.async_show_form(
+            step_id="new_device",
+            data_schema=vol.Schema({
+                vol.Required(CONF_HOST): str,
+                vol.Required(CONF_PORT, default=DEFAULT_PORT):
+                    vol.All(vol.Coerce(int), vol.Range(min=1, max=65535)),
+                vol.Required("device_name", default="Home Assistant"): str,
+                vol.Required(CONF_DIMMER_EXPORT_ID, default=DEFAULT_DIMMER_EXPORT_ID):
+                    vol.All(vol.Coerce(int), vol.Range(min=1)),
+                vol.Required(CONF_EXU_EXPORT_ID, default=DEFAULT_EXU_EXPORT_ID):
+                    vol.All(vol.Coerce(int), vol.Range(min=1)),
+            }),
+            errors=errors,
+        )
+
+    async def async_step_await_approval(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Wait for administrator approval without registering again."""
+        if self._registration_credentials is None or self._registration_settings is None:
+            return self.async_abort(reason="registration_session_lost")
+        device_id, private_key, _ = self._registration_credentials
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            try:
+                return await self._finish_registered_device(
+                    self._registration_settings, device_id, private_key
+                )
+            except BHSApiError:
+                errors["base"] = "pending_approval"
+        return self.async_show_form(
+            step_id="await_approval",
+            data_schema=vol.Schema({}),
+            errors=errors,
+            description_placeholders={"device_id": device_id},
+        )
+
+    async def _finish_registered_device(
+        self, settings: dict[str, Any], device_id: str, private_key: str
+    ) -> ConfigFlowResult:
+        """Only create the integration entry once its API access is validated."""
+        data = {**settings, CONF_DEVICE_ID: device_id,
+                "registration_private_key": private_key}
+        info = await _validate_input(self.hass, data)
+        guid = str(info["serverGUID"])
+        await self.async_set_unique_id(guid)
+        self._abort_if_unique_id_configured()
+        return self.async_create_entry(
+            title=f"BHS {settings[CONF_HOST]}", data=data,
+        )
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
