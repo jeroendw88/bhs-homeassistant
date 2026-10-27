@@ -1,3 +1,12 @@
+## v0.4.5b1 — Device registration beta
+
+- Added optional first-time BHS device registration to the config flow.
+- Generates a UUID v4 and RSA-2048 PEM key pair and registers through the official API.
+- Keeps the existing pre-registered UUID path available and does not touch installed entries.
+- Handles Approved/Pending responses and waits for administrator approval.
+- Stores the registered UUID and generated private key in the completed Home Assistant config entry.
+- Beta limitations: registration in a secure BHS installation will not enable encrypted API operation; pending credentials are held only while the setup wizard remains active.
+
 ## v0.4.4 — Export-backed EXU controls
 
 - Built from the published **v0.4.3** GitHub tag, preserving its SDim, shutter and DIM1K fixes.
