@@ -115,7 +115,11 @@ class BHSConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 if status == "Pending":
                     return await self.async_step_await_approval()
-                return await self._finish_registered_device(settings, device_id, private_key)
+                try:
+                    return await self._finish_registered_device(settings, device_id, private_key)
+                except BHSApiError:
+                    _LOGGER.warning("BHS registration succeeded but access is not ready yet")
+                    return await self.async_step_await_approval()
         return self.async_show_form(
             step_id="new_device",
             data_schema=vol.Schema({
