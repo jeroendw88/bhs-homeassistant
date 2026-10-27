@@ -19,14 +19,57 @@
           "dimmer_export_id": "Mobile export configured in BLConfig for DIM1K brightness telegrams.",
           "exu_export_id": "Mobile export for EXU members; standard EXU mode control does not require it."
         }
+      },
+      "registration": {
+        "title": "Apparaatregistratie",
+        "description": "Gebruik een reeds geregistreerd apparaat of registreer een nieuw Home Assistant-apparaat.",
+        "data": {
+          "registration_method": "Registratiemethode"
+        }
+      },
+      "existing_device": {
+        "title": "Verbinden met BHS",
+        "description": "Voer het lokale adres van de BHS-controller in.",
+        "data": {
+          "host": "Host",
+          "port": "HTTP-poort",
+          "protocol": "API protocol",
+          "device_id": "Registered device UUID (REST only)",
+          "dimmer_export_id": "Dimmer export ID",
+          "exu_export_id": "EXU export ID"
+        },
+        "data_description": {
+          "host": "IP-adres of hostnaam van de BHS-controller.",
+          "port": "DataSnap HTTP-poort. De standaard BHS-poort is 10014.",
+          "dimmer_export_id": "Mobile export configured in BLConfig for DIM1K brightness telegrams.",
+          "exu_export_id": "Mobile export for EXU members; standard EXU mode control does not require it."
+        }
+      },
+      "new_device": {
+        "title": "Nieuw BHS-apparaat registreren",
+        "description": "Eenmalige registratie: Home Assistant maakt een UUID v4 en RSA-sleutelpaar. Registratie kan goedkeuring van een beheerder vereisen.",
+        "data": {
+          "host": "Host",
+          "port": "Poort",
+          "device_name": "Apparaatnaam",
+          "dimmer_export_id": "Dimmer export-ID",
+          "exu_export_id": "EXU export-ID"
+        }
+      },
+      "await_approval": {
+        "title": "Wachten op BHS-goedkeuring",
+        "description": "Apparaat {device_id} is aangemeld. Laat een beheerder het apparaat goedkeuren en geef toegang tot de benodigde exports. Klik daarna op Verzenden om opnieuw te controleren. Sluit de wizard niet: de registratiegegevens zijn nog niet permanent opgeslagen."
       }
     },
     "error": {
       "cannot_connect": "Kan geen verbinding maken met de BHS-controller",
-      "unknown": "Onverwachte fout"
+      "unknown": "Onverwachte fout",
+      "registration_failed": "Registratie mislukt; controleer BHS-logboek voordat je opnieuw probeert.",
+      "pending_approval": "Nog niet goedgekeurd of verbinding niet beschikbaar."
     },
     "abort": {
-      "already_configured": "Deze BHS-controller is al geconfigureerd"
+      "already_configured": "Deze BHS-controller is al geconfigureerd",
+      "registration_session_lost": "Registratiesessie verlopen; herstel handmatig met de bestaande UUID en sleutels."
     }
   },
   "options": {
