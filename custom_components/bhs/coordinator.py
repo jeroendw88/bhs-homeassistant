@@ -17,6 +17,7 @@ from .exceptions import BHSApiError
 
 _LOGGER = logging.getLogger(__name__)
 _FULL_SYNC_SECONDS = 60
+_EXU_SYNC_SECONDS = 15
 
 
 class BHSCoordinator(DataUpdateCoordinator[dict[str, str]]):
@@ -38,6 +39,9 @@ class BHSCoordinator(DataUpdateCoordinator[dict[str, str]]):
         self.info: dict[str, Any] = {}
         self._needs_snapshot = self._rest_events
         self._last_snapshot = 0.0
+        self.exu_detectors: dict[str, dict[str, Any]] = {}
+        self.exu_programming_failed: set[str] = set()
+        self._last_exu_sync = 0.0
         # Volatile diagnostics: reset on integration reload, never persisted.
         self.last_response_at: datetime | None = None
         self.last_event_at: datetime | None = None
@@ -52,8 +56,39 @@ class BHSCoordinator(DataUpdateCoordinator[dict[str, str]]):
         try:
             self.info = await self.api.get_bhs_info()
             self.members = await self.api.get_members()
+            if self._rest_events:
+                try:
+                    await self.async_refresh_exu()
+                except BHSApiError as err:
+                    _LOGGER.warning('EXU export unavailable: %s', err)
         except BHSApiError as err:
             raise UpdateFailed(str(err)) from err
+
+    async def async_refresh_exu(self) -> None:
+        """Read EXU config without consuming the BHS change queue."""
+        if not self._rest_events:
+            return
+        self.exu_detectors = await self.api.get_motion_detectors_by_export()
+        self._last_exu_sync = monotonic()
+        if self.data is not None:
+            self.async_update_listeners()
+
+    async def async_set_exu_timer(
+        self, member_id: str, *, timer: int | None = None,
+        in_minutes: bool | None = None,
+    ) -> None:
+        """A module programming failure must remain visible to the user."""
+        try:
+            await self.api.set_motion_detector_timer(
+                member_id, timer=timer, in_minutes=in_minutes,
+            )
+        except BHSApiError:
+            self.exu_programming_failed.add(member_id)
+            if self.data is not None:
+                self.async_update_listeners()
+            raise
+        self.exu_programming_failed.discard(member_id)
+        await self.async_refresh_exu()
 
     async def _async_update_data(self) -> dict[str, str]:
         """Legacy: full poll. REST: consume changes before taking snapshots."""
@@ -81,6 +116,11 @@ class BHSCoordinator(DataUpdateCoordinator[dict[str, str]]):
                 self._needs_snapshot = True
 
             now = monotonic()
+            if now - self._last_exu_sync >= _EXU_SYNC_SECONDS:
+                try:
+                    await self.async_refresh_exu()
+                except BHSApiError as err:
+                    _LOGGER.warning('EXU refresh failed: %s', err)
             if (self._needs_snapshot or self.data is None
                     or now - self._last_snapshot >= _FULL_SYNC_SECONDS):
                 snapshot = await self.api.get_member_states()

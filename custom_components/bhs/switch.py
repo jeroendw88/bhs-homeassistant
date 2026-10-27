@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -51,7 +52,14 @@ async def async_setup_entry(
         entities.extend(
             BHSExuModeSwitch(coordinator, member)
             for member in coordinator.members
-            if is_exu(member) and resolve_role(member, coordinator.member_roles) == ROLE_EXU
+            if is_exu(member) and str(member.get('memberID')) in coordinator.exu_detectors
+        )
+
+    if isinstance(coordinator.api, BHSRestApi):
+        entities.extend(
+            BHSExuTimerUnitsSwitch(coordinator, member)
+            for member in coordinator.members
+            if is_exu(member) and str(member.get("memberID")) in coordinator.exu_detectors
         )
 
     validated = validated_sdim_members(coordinator.members)
@@ -166,42 +174,64 @@ class BHSSDimSceneSwitch(BHSEntity, SwitchEntity):
 
 
 class BHSExuModeSwitch(BHSEntity, SwitchEntity):
-    """EXU operating mode: On = manual, Off = automatic.
-
-    State reflects last observed Set/Reset bus message, not physical motion.
-    """
+    """API-reported EXU operating mode: On = manual, Off = automatic."""
 
     _attr_icon = "mdi:motion-sensor"
 
     def __init__(self, coordinator: BHSCoordinator, member: dict[str, Any]) -> None:
         super().__init__(coordinator, member)
-        # Keep separate from existing entity identifiers and motion sensors.
         self._attr_unique_id = f"{self.member_id}_exu_manual_mode"
         self._attr_name = f"{member.get('name') or self.member_id} Manual mode"
 
     @property
     def is_on(self) -> bool | None:
-        state = self.coordinator.data.get(self.member_id)
-        if not isinstance(state, str):
-            return None
-        if state.casefold() == "set":
-            return True
-        if state.casefold() == "reset":
-            return False
-        return None
+        detector = self.coordinator.exu_detectors.get(self.member_id)
+        return detector.get("manual") if detector else None
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        """Select manual mode by Set."""
-        await self.coordinator.api.command_member(self.member_id, "set")
-        await self.coordinator.async_request_refresh()
+        await self.coordinator.api.set_motion_detector_mode(self.member_id, True)
+        await self.coordinator.async_refresh_exu()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        """Select automatic mode by Reset."""
-        await self.coordinator.api.command_member(self.member_id, "reset")
-        await self.coordinator.async_request_refresh()
+        await self.coordinator.api.set_motion_detector_mode(self.member_id, False)
+        await self.coordinator.async_refresh_exu()
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         attrs = dict(super().extra_state_attributes)
-        attrs["mode_description"] = "Set = manual; Reset = automatic (last observed command)"
+        detector = self.coordinator.exu_detectors.get(self.member_id, {})
+        attrs["bhs_follow_input"] = detector.get("followInput")
+        attrs["bhs_mode_source"] = "getMotionDetectorsByExport"
+        return attrs
+
+
+class BHSExuTimerUnitsSwitch(BHSEntity, SwitchEntity):
+    """On = minutes; Off = seconds. Updates the BHS module configuration."""
+
+    _attr_icon = "mdi:clock-outline"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: BHSCoordinator, member: dict[str, Any]) -> None:
+        super().__init__(coordinator, member)
+        self._attr_unique_id = f"{self.member_id}_exu_timer_minutes"
+        self._attr_name = f"{member.get('name') or self.member_id} Timer in minutes"
+
+    @property
+    def is_on(self) -> bool | None:
+        detector = self.coordinator.exu_detectors.get(self.member_id, {})
+        timer = detector.get("timer")
+        return timer.get("inMinutes") if isinstance(timer, dict) else None
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self.coordinator.async_set_exu_timer(self.member_id, in_minutes=True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self.coordinator.async_set_exu_timer(self.member_id, in_minutes=False)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        attrs = dict(super().extra_state_attributes)
+        detector = self.coordinator.exu_detectors.get(self.member_id, {})
+        attrs["bhs_follow_input"] = detector.get("followInput")
+        attrs["bhs_module_programming_failed"] = self.member_id in self.coordinator.exu_programming_failed
         return attrs

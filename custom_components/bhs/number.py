@@ -35,6 +35,12 @@ async def async_setup_entry(
         BHSCoverTravelTime(coordinator, entry, up, down, pair_identity(hass, up, down))
         for up, down in cover_pairs(coordinator.members, coordinator.cover_directions)
     )
+    entities.extend(
+        BHSExuTimerValue(coordinator, member)
+        for member in coordinator.members
+        if member.get("memberType") == 17
+        and str(member.get("memberID")) in coordinator.exu_detectors
+    )
     async_add_entities(entities)
 
 
@@ -114,3 +120,38 @@ class BHSCoverTravelTime(BHSEntity, NumberEntity):
         if cover is not None:
             cover.travel_time_changed()
         self.async_write_ha_state()
+
+
+class BHSExuTimerValue(BHSEntity, NumberEntity):
+    """BHS motion hold time, in the currently configured unit."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_native_min_value = 0
+    _attr_native_max_value = 255
+    _attr_native_step = 1
+    _attr_mode = NumberMode.BOX
+    _attr_icon = "mdi:timer-outline"
+
+    def __init__(self, coordinator: BHSCoordinator, member: dict) -> None:
+        super().__init__(coordinator, member)
+        self._attr_unique_id = f"{self.member_id}_exu_timer_value"
+        self._attr_name = f"{member.get('name') or self.member_id} Motion timer"
+
+    @property
+    def native_value(self) -> int | None:
+        detector = self.coordinator.exu_detectors.get(self.member_id, {})
+        timer = detector.get("timer")
+        return timer.get("value") if isinstance(timer, dict) else None
+
+    async def async_set_native_value(self, value: float) -> None:
+        if not float(value).is_integer() or not 0 <= value <= 255:
+            raise ValueError("Motion timer must be an integer from 0 to 255")
+        await self.coordinator.async_set_exu_timer(self.member_id, timer=int(value))
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        attrs = dict(super().extra_state_attributes)
+        detector = self.coordinator.exu_detectors.get(self.member_id, {})
+        attrs["bhs_follow_input"] = detector.get("followInput")
+        attrs["bhs_module_programming_failed"] = self.member_id in self.coordinator.exu_programming_failed
+        return attrs
